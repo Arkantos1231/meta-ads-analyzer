@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign In — Meta Ads Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="login-page">
+  <div class="login-card">
+    <div class="login-brand">
+      <span class="logo">📊</span>
+      <span class="brand">Meta Ads Dashboard</span>
+    </div>
+    <form id="loginForm">
+      <div class="field-group">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" autocomplete="username" required autofocus />
+      </div>
+      <div class="field-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required />
+      </div>
+      <button type="submit" class="btn-login" id="loginBtn">Sign in</button>
+      <div class="login-error hidden" id="loginError"></div>
+    </form>
+  </div>
+  <script src="login.js" type="module"></script>
+</body>
+</html>

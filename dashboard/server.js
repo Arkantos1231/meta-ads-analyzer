@@ -1,16 +1,36 @@
 #!/usr/bin/env node
 /**
- * Meta Ads Dashboard — proxy server
+ * Meta Ads Dashboard — proxy server (multi-tenant)
  *
- * Uses only Node.js 18+ built-ins (http, fs, path, url).
- * Reads credentials from ../.env.meta-ads.
+ * Uses only Node.js 18+ built-ins + better-sqlite3 + bcryptjs.
+ * Reads credentials from .env.meta-ads.
  * Serves dashboard/public/ as static files on port 3000.
  */
 
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import bcrypt from 'bcryptjs';
+import {
+  getSession,
+  getUserById,
+  getUserByUsername,
+  getAllUsers,
+  createUser,
+  deleteUser,
+  updateUserPassword,
+  updateUserMetaToken,
+  updateUserMetaAppId,
+  updateUserMetaAppSecret,
+  clearUserMetaField,
+  deleteAllUserSessions,
+  createSession,
+  deleteSession,
+  encrypt,
+  decrypt,
+} from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -41,12 +61,16 @@ function loadEnv(filePath) {
 }
 
 const env = loadEnv(ENV_FILE);
-const ACCESS_TOKEN = env.META_ACCESS_TOKEN;
 
-if (!ACCESS_TOKEN) {
-  console.error('❌  META_ACCESS_TOKEN is missing from .env.meta-ads');
+if (!env.ENCRYPTION_KEY) {
+  console.error('❌  ENCRYPTION_KEY is missing from .env.meta-ads');
+  console.error('   Generate one: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
   process.exit(1);
 }
+
+// Expose to db.js (which reads from process.env)
+process.env.ENCRYPTION_KEY = env.ENCRYPTION_KEY;
+if (env.DB_PATH) process.env.DB_PATH = env.DB_PATH;
 
 const OPENAI_API_KEY = env.OPENAI_API_KEY || null;
 if (!OPENAI_API_KEY) console.warn('⚠️  OPENAI_API_KEY missing — AI recommendations disabled');
@@ -54,10 +78,54 @@ if (!OPENAI_API_KEY) console.warn('⚠️  OPENAI_API_KEY missing — AI recomme
 const GRAPH_BASE = 'https://graph.facebook.com/v21.0';
 
 // ---------------------------------------------------------------------------
+// Auth middleware
+// ---------------------------------------------------------------------------
+function requireAuth(req) {
+  const cookieHeader = req.headers.cookie || '';
+  const match = cookieHeader.match(/(?:^|;\s*)session=([^;]+)/);
+  if (!match) throw Object.assign(new Error('Unauthorized'), { status: 401 });
+  const session = getSession(match[1]);
+  if (!session) throw Object.assign(new Error('Session expired'), { status: 401 });
+  const user = getUserById(session.user_id);
+  if (!user) throw Object.assign(new Error('Unauthorized'), { status: 401 });
+
+  const metaToken    = user.meta_token_enc      ? decrypt(user.meta_token_enc,      user.meta_token_iv,      user.meta_token_tag)      : null;
+  const metaAppId    = user.meta_app_id_enc     ? decrypt(user.meta_app_id_enc,     user.meta_app_id_iv,     user.meta_app_id_tag)     : null;
+  const metaAppSecret= user.meta_app_secret_enc ? decrypt(user.meta_app_secret_enc, user.meta_app_secret_iv, user.meta_app_secret_tag) : null;
+
+  return {
+    id: user.id, username: user.username, email: user.email, role: user.role,
+    metaToken, metaAppId, metaAppSecret,
+    meta_token_enc: user.meta_token_enc,
+    meta_app_id_enc: user.meta_app_id_enc,
+    meta_app_secret_enc: user.meta_app_secret_enc,
+  };
+}
+
+function requireAdmin(req) {
+  const user = requireAuth(req);
+  if (user.role !== 'admin') throw Object.assign(new Error('Forbidden'), { status: 403 });
+  return user;
+}
+
+function sessionCookie(token) {
+  return `session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${30 * 24 * 60 * 60}`;
+}
+
+function clearSessionCookie() {
+  return 'session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0';
+}
+
+// ---------------------------------------------------------------------------
 // Meta API helper
 // ---------------------------------------------------------------------------
-async function metaGet(path, params = {}) {
-  const qs = new URLSearchParams({ access_token: ACCESS_TOKEN, ...params });
+async function metaGet(path, params = {}, accessToken, appSecret = null) {
+  const extra = {};
+  if (appSecret) {
+    // appsecret_proof adds server-side validation — Meta recommends it for server calls
+    extra.appsecret_proof = crypto.createHmac('sha256', appSecret).update(accessToken).digest('hex');
+  }
+  const qs = new URLSearchParams({ access_token: accessToken, ...extra, ...params });
   const url = `${GRAPH_BASE}${path}?${qs}`;
   const res = await fetch(url);
   const json = await res.json();
@@ -83,6 +151,14 @@ function readBody(req) {
 }
 
 // ---------------------------------------------------------------------------
+// JSON response helpers
+// ---------------------------------------------------------------------------
+function sendJson(res, status, data) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+// ---------------------------------------------------------------------------
 // AI recommendations via OpenAI
 // ---------------------------------------------------------------------------
 async function getAiRecommendations(payload) {
@@ -104,7 +180,6 @@ async function getAiRecommendations(payload) {
   const impressions = parseInt(ins.impressions || 0).toLocaleString('en-US');
   const reach       = parseInt(ins.reach       || 0).toLocaleString('en-US');
 
-  // Top 5 ads by spend
   const topAds = [...(ads || [])].sort((a, b) => parseFloat(b.spend || 0) - parseFloat(a.spend || 0)).slice(0, 5);
   const adsTable = topAds.length > 0
     ? '| Ad | Spend | ROAS | CTR | CPM | Purchases |\n' +
@@ -195,7 +270,6 @@ async function getAiReport(payload) {
       allAds.slice(0, 10).map(ad => {
         const adRoas  = Array.isArray(ad.purchase_roas) && ad.purchase_roas[0] ? parseFloat(ad.purchase_roas[0].value).toFixed(2) + 'x' : 'N/A';
         const adPurch = (Array.isArray(ad.actions) ? ad.actions.find(a => a.action_type === 'purchase') : null)?.value || '0';
-        const adRev   = (Array.isArray(ad.action_values) ? ad.action_values.find(a => a.action_type === 'purchase') : null)?.value || '0';
         return `| ${ad.ad_name || 'Unknown'} | $${parseFloat(ad.spend || 0).toFixed(2)} | ${adRoas} | ${parseFloat(ad.ctr || 0).toFixed(2)}% | $${parseFloat(ad.cpm || 0).toFixed(2)} | $${parseFloat(ad.cpc || 0).toFixed(2)} | ${adPurch} |`;
       }).join('\n')
     : 'No ad-level data available';
@@ -274,26 +348,29 @@ Use the exact numbers from the data. Be direct and specific.`;
 }
 
 // ---------------------------------------------------------------------------
-// Route handlers
+// Route handlers (all receive user object with metaToken)
 // ---------------------------------------------------------------------------
 const routes = {
-  '/api/accounts': async (_query) => {
+  '/api/accounts': async (_query, user) => {
+    if (!user.metaToken) throw Object.assign(new Error('Meta token not configured — go to Settings'), { status: 400 });
     return metaGet('/me/adaccounts', {
       fields: 'name,account_id,account_status,currency',
       limit: 100,
-    });
+    }, user.metaToken);
   },
 
-  '/api/campaigns': async (query) => {
+  '/api/campaigns': async (query, user) => {
+    if (!user.metaToken) throw Object.assign(new Error('Meta token not configured — go to Settings'), { status: 400 });
     const { account_id } = query;
     if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
     return metaGet(`/act_${account_id}/campaigns`, {
       fields: 'id,name,status,objective,daily_budget,lifetime_budget,effective_status',
       limit: 100,
-    });
+    }, user.metaToken);
   },
 
-  '/api/insights': async (query) => {
+  '/api/insights': async (query, user) => {
+    if (!user.metaToken) throw Object.assign(new Error('Meta token not configured — go to Settings'), { status: 400 });
     const { account_id, date_preset = 'last_30d' } = query;
     if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
     return metaGet(`/act_${account_id}/insights`, {
@@ -314,28 +391,31 @@ const routes = {
         'frequency',
       ].join(','),
       limit: 100,
-    });
+    }, user.metaToken);
   },
 
-  '/api/adsets': async (query) => {
+  '/api/adsets': async (query, user) => {
+    if (!user.metaToken) throw Object.assign(new Error('Meta token not configured — go to Settings'), { status: 400 });
     const { account_id } = query;
     if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
     return metaGet(`/act_${account_id}/adsets`, {
       fields: 'name,status,effective_status,learning_stage_info,campaign_id,daily_budget,bid_strategy',
       limit: 200,
-    });
+    }, user.metaToken);
   },
 
-  '/api/ad-creatives': async (query) => {
+  '/api/ad-creatives': async (query, user) => {
+    if (!user.metaToken) throw Object.assign(new Error('Meta token not configured — go to Settings'), { status: 400 });
     const { account_id } = query;
     if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
     return metaGet(`/act_${account_id}/ads`, {
       fields: 'id,name,creative{id,thumbnail_url,image_url}',
       limit: 500,
-    });
+    }, user.metaToken);
   },
 
-  '/api/ads': async (query) => {
+  '/api/ads': async (query, user) => {
+    if (!user.metaToken) throw Object.assign(new Error('Meta token not configured — go to Settings'), { status: 400 });
     const { account_id, date_preset = 'last_30d' } = query;
     if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
     return metaGet(`/act_${account_id}/insights`, {
@@ -359,10 +439,11 @@ const routes = {
         'frequency',
       ].join(','),
       limit: 500,
-    });
+    }, user.metaToken);
   },
 
-  '/api/placements': async (query) => {
+  '/api/placements': async (query, user) => {
+    if (!user.metaToken) throw Object.assign(new Error('Meta token not configured — go to Settings'), { status: 400 });
     const { account_id, date_preset = 'last_30d' } = query;
     if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
     return metaGet(`/act_${account_id}/insights`, {
@@ -379,7 +460,7 @@ const routes = {
         'actions',
       ].join(','),
       limit: 200,
-    });
+    }, user.metaToken);
   },
 };
 
@@ -388,19 +469,31 @@ const routes = {
 // ---------------------------------------------------------------------------
 const MIME = {
   '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
+  '.css':  'text/css; charset=utf-8',
+  '.js':   'application/javascript; charset=utf-8',
   '.json': 'application/json',
-  '.ico': 'image/x-icon',
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml',
+  '.ico':  'image/x-icon',
+  '.png':  'image/png',
+  '.svg':  'image/svg+xml',
 };
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 function serveStatic(req, res) {
   let urlPath = new URL(req.url, 'http://x').pathname;
-  if (urlPath === '/') urlPath = '/index.html';
+
+  // Protect the root/index — redirect unauthenticated users to login
+  if (urlPath === '/' || urlPath === '/index.html') {
+    try {
+      requireAuth(req);
+    } catch {
+      res.writeHead(302, { Location: '/login.html' });
+      res.end();
+      return;
+    }
+    urlPath = '/index.html';
+  }
+
   const filePath = path.join(PUBLIC_DIR, urlPath);
 
   // Prevent path traversal
@@ -429,64 +522,252 @@ const PORT = process.env.PORT || 3000;
 
 const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url, `http://localhost:${PORT}`);
-  const pathname = parsedUrl.pathname;
+  const pathname  = parsedUrl.pathname;
+  const method    = req.method;
 
-  // CORS for local dev
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // ------------------------------------------------------------------
+  // Auth endpoints
+  // ------------------------------------------------------------------
 
-  // POST: AI endpoints
-  if (req.method === 'POST' && pathname === '/api/ai-report') {
+  // POST /auth/login
+  if (method === 'POST' && pathname === '/auth/login') {
     try {
+      const body = await readBody(req);
+      const { username, password } = JSON.parse(body);
+      if (!username || !password) return sendJson(res, 400, { error: 'username and password required' });
+
+      const user = getUserByUsername(username);
+      if (!user) return sendJson(res, 401, { error: 'Invalid username or password' });
+
+      const ok = await bcrypt.compare(password, user.password_hash);
+      if (!ok) return sendJson(res, 401, { error: 'Invalid username or password' });
+
+      const token = createSession(user.id);
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Set-Cookie': sessionCookie(token),
+      });
+      res.end(JSON.stringify({ ok: true, username: user.username, role: user.role }));
+    } catch (err) {
+      sendJson(res, 500, { error: err.message });
+    }
+    return;
+  }
+
+  // POST /auth/logout
+  if (method === 'POST' && pathname === '/auth/logout') {
+    const cookieHeader = req.headers.cookie || '';
+    const match = cookieHeader.match(/(?:^|;\s*)session=([^;]+)/);
+    if (match) deleteSession(match[1]);
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Set-Cookie': clearSessionCookie(),
+    });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // GET /auth/me
+  if (method === 'GET' && pathname === '/auth/me') {
+    try {
+      const user = requireAuth(req);
+      sendJson(res, 200, {
+        username:     user.username,
+        email:        user.email,
+        role:         user.role,
+        hasMetaToken: !!user.meta_token_enc,
+      });
+    } catch (err) {
+      sendJson(res, err.status || 401, { error: err.message });
+    }
+    return;
+  }
+
+  // ------------------------------------------------------------------
+  // Settings endpoints
+  // ------------------------------------------------------------------
+
+  // PUT /settings/meta-token
+  if (method === 'PUT' && pathname === '/settings/meta-token') {
+    try {
+      const user = requireAuth(req);
+      const body = await readBody(req);
+      const { token } = JSON.parse(body);
+      if (!token || !token.trim()) return sendJson(res, 400, { error: 'token is required' });
+      const { enc, iv, tag } = encrypt(token.trim());
+      updateUserMetaToken(user.id, enc, iv, tag);
+      sendJson(res, 200, { ok: true });
+    } catch (err) {
+      sendJson(res, err.status || 500, { error: err.message });
+    }
+    return;
+  }
+
+  // GET /settings/meta-token-status
+  if (method === 'GET' && pathname === '/settings/meta-token-status') {
+    try {
+      const user = requireAuth(req);
+      sendJson(res, 200, { configured: !!user.meta_token_enc });
+    } catch (err) {
+      sendJson(res, err.status || 401, { error: err.message });
+    }
+    return;
+  }
+
+  // PUT /settings/password
+  if (method === 'PUT' && pathname === '/settings/password') {
+    try {
+      const user = requireAuth(req);
+      const body = await readBody(req);
+      const { currentPassword, newPassword } = JSON.parse(body);
+      if (!currentPassword || !newPassword) return sendJson(res, 400, { error: 'currentPassword and newPassword required' });
+      if (newPassword.length < 8) return sendJson(res, 400, { error: 'New password must be at least 8 characters' });
+
+      const dbUser = getUserById(user.id);
+      const ok = await bcrypt.compare(currentPassword, dbUser.password_hash);
+      if (!ok) return sendJson(res, 401, { error: 'Current password is incorrect' });
+
+      const hash = await bcrypt.hash(newPassword, 12);
+      updateUserPassword(user.id, hash);
+      sendJson(res, 200, { ok: true });
+    } catch (err) {
+      sendJson(res, err.status || 500, { error: err.message });
+    }
+    return;
+  }
+
+  // ------------------------------------------------------------------
+  // Admin endpoints
+  // ------------------------------------------------------------------
+
+  // GET /admin/users
+  if (method === 'GET' && pathname === '/admin/users') {
+    try {
+      requireAdmin(req);
+      sendJson(res, 200, { users: getAllUsers() });
+    } catch (err) {
+      sendJson(res, err.status || 500, { error: err.message });
+    }
+    return;
+  }
+
+  // POST /admin/users
+  if (method === 'POST' && pathname === '/admin/users') {
+    try {
+      requireAdmin(req);
+      const body = await readBody(req);
+      const { username, email, password, role = 'user' } = JSON.parse(body);
+      if (!username || !email || !password) return sendJson(res, 400, { error: 'username, email, and password are required' });
+      if (password.length < 8) return sendJson(res, 400, { error: 'Password must be at least 8 characters' });
+      if (!['admin', 'user'].includes(role)) return sendJson(res, 400, { error: 'role must be "admin" or "user"' });
+
+      const passwordHash = await bcrypt.hash(password, 12);
+      createUser({ username, email, passwordHash, role });
+      sendJson(res, 201, { ok: true });
+    } catch (err) {
+      if (err.message && err.message.includes('UNIQUE')) {
+        return sendJson(res, 409, { error: 'Username or email already exists' });
+      }
+      sendJson(res, err.status || 500, { error: err.message });
+    }
+    return;
+  }
+
+  // DELETE /admin/users/:id
+  const deleteUserMatch = pathname.match(/^\/admin\/users\/(\d+)$/);
+  if (method === 'DELETE' && deleteUserMatch) {
+    try {
+      const admin = requireAdmin(req);
+      const targetId = parseInt(deleteUserMatch[1], 10);
+      if (targetId === admin.id) return sendJson(res, 400, { error: 'Cannot delete your own account' });
+      deleteUser(targetId);
+      sendJson(res, 200, { ok: true });
+    } catch (err) {
+      sendJson(res, err.status || 500, { error: err.message });
+    }
+    return;
+  }
+
+  // PUT /admin/users/:id/password
+  const resetPwdMatch = pathname.match(/^\/admin\/users\/(\d+)\/password$/);
+  if (method === 'PUT' && resetPwdMatch) {
+    try {
+      requireAdmin(req);
+      const targetId = parseInt(resetPwdMatch[1], 10);
+      const body = await readBody(req);
+      const { newPassword } = JSON.parse(body);
+      if (!newPassword || newPassword.length < 8) return sendJson(res, 400, { error: 'newPassword must be at least 8 characters' });
+
+      const hash = await bcrypt.hash(newPassword, 12);
+      updateUserPassword(targetId, hash);
+      deleteAllUserSessions(targetId);
+      sendJson(res, 200, { ok: true });
+    } catch (err) {
+      sendJson(res, err.status || 500, { error: err.message });
+    }
+    return;
+  }
+
+  // ------------------------------------------------------------------
+  // POST: AI endpoints (auth required)
+  // ------------------------------------------------------------------
+  if (method === 'POST' && pathname === '/api/ai-report') {
+    try {
+      requireAuth(req);
       const body = await readBody(req);
       const payload = JSON.parse(body);
       const result = await getAiReport(payload);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(result));
+      sendJson(res, 200, result);
     } catch (err) {
-      const status = err.status || 500;
-      res.writeHead(status, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+      sendJson(res, err.status || 500, { error: err.message });
     }
     return;
   }
 
-  if (req.method === 'POST' && pathname === '/api/ai-recommend') {
+  if (method === 'POST' && pathname === '/api/ai-recommend') {
     try {
+      requireAuth(req);
       const body = await readBody(req);
       const payload = JSON.parse(body);
       const result = await getAiRecommendations(payload);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(result));
+      sendJson(res, 200, result);
     } catch (err) {
-      const status = err.status || 500;
-      res.writeHead(status, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+      sendJson(res, err.status || 500, { error: err.message });
     }
     return;
   }
 
-  // API routes
+  // ------------------------------------------------------------------
+  // Meta API routes (auth required, per-user token)
+  // ------------------------------------------------------------------
   if (pathname.startsWith('/api/')) {
-    const handler = routes[pathname];
-    if (!handler) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Unknown endpoint' }));
+    let user;
+    try {
+      user = requireAuth(req);
+    } catch (err) {
+      sendJson(res, err.status || 401, { error: err.message });
       return;
     }
+
+    const handler = routes[pathname];
+    if (!handler) {
+      sendJson(res, 404, { error: 'Unknown endpoint' });
+      return;
+    }
+
     const query = Object.fromEntries(parsedUrl.searchParams.entries());
     try {
-      const data = await handler(query);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(data));
+      const data = await handler(query, user);
+      sendJson(res, 200, data);
     } catch (err) {
-      const status = err.status || 500;
-      res.writeHead(status, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message, detail: err.meta }));
+      sendJson(res, err.status || 500, { error: err.message, detail: err.meta });
     }
     return;
   }
 
+  // ------------------------------------------------------------------
   // Static files
+  // ------------------------------------------------------------------
   serveStatic(req, res);
 });
 

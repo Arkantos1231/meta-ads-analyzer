@@ -32,6 +32,9 @@
       </div>
       <button id="themeBtn" class="btn-theme" title="Toggle light/dark theme">☀</button>
       <button id="refreshBtn" class="btn-refresh" title="Refresh data">↻ Refresh</button>
+      <span id="headerUsername" class="header-username"></span>
+      <button id="settingsBtn" class="btn-theme" title="Settings">⚙</button>
+      <button id="logoutBtn"   class="btn-theme" title="Sign out">⏻</button>
     </div>
   </header>
 
@@ -217,6 +220,111 @@
   <footer class="footer">
     Meta Graph API v21.0 &nbsp;·&nbsp; Data refreshed: <span id="lastRefresh">—</span>
   </footer>
+
+  <!-- SETTINGS MODAL -->
+  <div class="modal-overlay hidden" id="settingsOverlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Settings</h3>
+        <button class="modal-close" id="settingsClose" title="Close">✕</button>
+      </div>
+
+      <!-- Tab bar -->
+      <div class="modal-tabs">
+        <button class="modal-tab active" data-tab="profile">Profile</button>
+        <button class="modal-tab" data-tab="token">Meta Token</button>
+        <button class="modal-tab admin-only hidden" data-tab="admin">Admin</button>
+      </div>
+
+      <!-- Profile pane -->
+      <div class="modal-pane" id="pane-profile">
+        <div class="modal-section">
+          <h4>Change Password</h4>
+          <div class="field-group">
+            <label for="currentPassword">Current password</label>
+            <input type="password" id="currentPassword" autocomplete="current-password" />
+          </div>
+          <div class="field-group">
+            <label for="newPassword">New password <span class="field-hint">(min 8 chars)</span></label>
+            <input type="password" id="newPassword" autocomplete="new-password" />
+          </div>
+          <div class="field-group">
+            <label for="confirmPassword">Confirm new password</label>
+            <input type="password" id="confirmPassword" autocomplete="new-password" />
+          </div>
+          <button class="btn-primary" id="changePasswordBtn">Update Password</button>
+          <div class="modal-feedback hidden" id="profileFeedback"></div>
+        </div>
+      </div>
+
+      <!-- Meta Token pane -->
+      <div class="modal-pane hidden" id="pane-token">
+        <div class="modal-section">
+          <h4>Meta Access Token</h4>
+          <p class="modal-hint">Your token is stored encrypted on the server. It is never shared with other users.</p>
+          <div class="token-status-row">
+            Status: <span id="tokenStatus" class="token-status--missing">Not configured</span>
+          </div>
+          <div class="field-group">
+            <label for="metaTokenInput">Paste your Meta Access Token</label>
+            <textarea id="metaTokenInput" rows="4" placeholder="EAABwzLixnjYBO..."></textarea>
+          </div>
+          <button class="btn-primary" id="saveTokenBtn">Save Token</button>
+          <div class="modal-feedback hidden" id="tokenFeedback"></div>
+        </div>
+      </div>
+
+      <!-- Admin pane -->
+      <div class="modal-pane hidden" id="pane-admin">
+        <div class="modal-section">
+          <h4>Users</h4>
+          <table class="admin-user-table" id="adminUserTable">
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Token</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="adminUserBody">
+              <tr><td colspan="5" class="empty-row">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="modal-section">
+          <h4>Create User</h4>
+          <div class="admin-create-form">
+            <div class="field-group">
+              <label for="newUsername">Username</label>
+              <input type="text" id="newUsername" autocomplete="off" />
+            </div>
+            <div class="field-group">
+              <label for="newEmail">Email</label>
+              <input type="email" id="newEmail" autocomplete="off" />
+            </div>
+            <div class="field-group">
+              <label for="newUserPassword">Password <span class="field-hint">(min 8 chars)</span></label>
+              <input type="password" id="newUserPassword" autocomplete="new-password" />
+            </div>
+            <div class="field-group">
+              <label for="newUserRole">Role</label>
+              <select id="newUserRole">
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <button class="btn-primary" id="createUserBtn">Create User</button>
+          </div>
+          <div class="modal-feedback hidden" id="adminFeedback"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+  <!-- /SETTINGS MODAL -->
 
   <script src="app.js" type="module"></script>
 </body>

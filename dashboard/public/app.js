@@ -43,6 +43,11 @@ const adFilterTag    = document.getElementById('adFilterTag');
 const adsetFilterTag = document.getElementById('adsetFilterTag');
 const themeBtn       = document.getElementById('themeBtn');
 
+// Header user area
+const headerUsername = document.getElementById('headerUsername');
+const settingsBtn    = document.getElementById('settingsBtn');
+const logoutBtn      = document.getElementById('logoutBtn');
+
 // ---------------------------------------------------------------------------
 // Theme toggle
 // ---------------------------------------------------------------------------
@@ -87,9 +92,13 @@ const btnAiReport     = document.getElementById('btnAiReport');
 // ---------------------------------------------------------------------------
 // Fetch helpers
 // ---------------------------------------------------------------------------
-async function apiFetch(path) {
-  const res = await fetch(path);
+async function apiFetch(path, options = {}) {
+  const res = await fetch(path, { credentials: 'include', ...options });
   const json = await res.json();
+  if (res.status === 401) {
+    window.location.href = '/login.html';
+    throw new Error('Session expired');
+  }
   if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
   return json;
 }
@@ -178,7 +187,6 @@ function loadingRow(cols) {
 // Render: Summary Cards
 // ---------------------------------------------------------------------------
 function renderSummary(insightRows) {
-  // Aggregate across all campaign rows
   let totalSpend = 0, totalImpressions = 0, totalClicks = 0;
   let totalCpmNumer = 0, totalPurchases = 0, totalRoasNumer = 0, roasRowCount = 0;
 
@@ -193,7 +201,7 @@ function renderSummary(insightRows) {
     totalSpend       += spend;
     totalImpressions += impressions;
     totalClicks      += clicks;
-    totalCpmNumer    += cpm * impressions;   // weighted CPM
+    totalCpmNumer    += cpm * impressions;
     totalPurchases   += purchases;
     if (roas !== null) { totalRoasNumer += roas * spend; roasRowCount += spend; }
   }
@@ -228,7 +236,6 @@ function escapeAttr(str) {
 }
 
 function renderCampaigns(campaignRows, insightRows) {
-  // Build map: campaign_name → insight metrics
   const insightMap = {};
   for (const row of (insightRows || [])) {
     insightMap[row.campaign_name] = row;
@@ -240,7 +247,6 @@ function renderCampaigns(campaignRows, insightRows) {
     return;
   }
 
-  // Sort: campaigns with spend first (desc), then no-spend alphabetically
   const sorted = [...campaignRows].sort((a, b) => {
     const aSpend = parseFloat(insightMap[a.name]?.spend) || 0;
     const bSpend = parseFloat(insightMap[b.name]?.spend) || 0;
@@ -272,7 +278,6 @@ function renderCampaigns(campaignRows, insightRows) {
 
   campaignCount.textContent = sorted.length;
 
-  // Attach click handlers
   campaignBody.querySelectorAll('.campaign-row').forEach(row => {
     row.addEventListener('click', () => onCampaignClick(row.dataset.campaign, row.dataset.campaignId));
   });
@@ -283,7 +288,6 @@ function renderCampaigns(campaignRows, insightRows) {
 // ---------------------------------------------------------------------------
 function onCampaignClick(campaignName, campaignId) {
   if (selectedCampaign === campaignName) {
-    // Deselect — show all
     selectedCampaign = null;
     campaignBody.querySelectorAll('.campaign-row').forEach(r => r.classList.remove('row-selected'));
     setFilterTag(adFilterTag, null);
@@ -306,12 +310,10 @@ function onCampaignClick(campaignName, campaignId) {
     const filteredAdsets = allAdsetRows.filter(r => r.campaign_id === campaignId);
     renderAds(filteredAds, allCreativeMap);
     renderAdsets(filteredAdsets);
-    // Store for button clicks
     aiCampaignLabel.textContent = truncate(campaignName, 50);
     aiBody.innerHTML = '<p class="ai-placeholder">Campaign selected — use a button above to generate AI analysis.</p>';
     btnAiRecommend.disabled = false;
     btnAiReport.disabled    = false;
-    // Store current selection on buttons for click handlers
     btnAiRecommend.dataset.campaignName = campaignName;
     btnAiRecommend.dataset.campaignId   = campaignId;
     btnAiReport.dataset.campaignName    = campaignName;
@@ -323,16 +325,12 @@ function onCampaignClick(campaignName, campaignId) {
 // AI Recommendations
 // ---------------------------------------------------------------------------
 function renderMarkdown(text) {
-  // Escape HTML first
   const safe = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-  // Replace **bold**
   const withBold = safe.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-
-  // Split on numbered list items (e.g. "\n1. ", "\n2. ")
   const chunks = withBold.split(/\n(?=\d+\.\s)/);
 
   if (chunks.length > 1) {
@@ -346,7 +344,6 @@ function renderMarkdown(text) {
       .join('');
   }
 
-  // Fallback: plain text with line breaks
   return `<div class="ai-rec-text">${withBold.replace(/\n/g, '<br>')}</div>`;
 }
 
@@ -375,12 +372,11 @@ async function fetchAiRecommendations(campaignName, campaignId) {
   btnAiReport.disabled    = true;
 
   try {
-    const res  = await fetch('/api/ai-recommend', {
-      method: 'POST',
+    const json = await apiFetch('/api/ai-recommend', {
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildAiPayload(campaignName, campaignId)),
+      body:    JSON.stringify(buildAiPayload(campaignName, campaignId)),
     });
-    const json = await res.json();
     aiBody.innerHTML = json.error
       ? `<div class="ai-error">⚠ ${json.error}</div>`
       : renderMarkdown(json.recommendations);
@@ -399,12 +395,11 @@ async function generatePdfReport(campaignName, campaignId) {
   btnAiRecommend.disabled  = true;
 
   try {
-    const res  = await fetch('/api/ai-report', {
-      method: 'POST',
+    const json = await apiFetch('/api/ai-report', {
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildAiPayload(campaignName, campaignId)),
+      body:    JSON.stringify(buildAiPayload(campaignName, campaignId)),
     });
-    const json = await res.json();
     if (json.error) {
       aiBody.innerHTML = `<div class="ai-error">⚠ Report error: ${json.error}</div>`;
       return;
@@ -556,7 +551,7 @@ function setFilterTag(el, label) {
     el.innerHTML = `Filtered: ${label} <span class="clear-filter" title="Clear filter">✕</span>`;
     el.querySelector('.clear-filter').addEventListener('click', (e) => {
       e.stopPropagation();
-      onCampaignClick(selectedCampaign, null); // toggle off
+      onCampaignClick(selectedCampaign, null);
     });
   }
 }
@@ -580,7 +575,6 @@ function renderAds(adRows, creativeMap = {}) {
     return;
   }
 
-  // Sort by spend desc
   const sorted = [...adRows].sort((a, b) => parseFloat(b.spend) - parseFloat(a.spend));
 
   adBody.innerHTML = sorted.map(row => {
@@ -623,7 +617,6 @@ function renderAdsets(adsetRows) {
     return;
   }
 
-  // Separate: learning/limited first, then the rest alphabetically
   const priority = ['LEARNING', 'LEARNING_LIMITED'];
   const sorted = [...adsetRows].sort((a, b) => {
     const aStage = a.learning_stage_info?.status || '';
@@ -659,7 +652,6 @@ function renderPlacements(placementRows) {
     return;
   }
 
-  // Sort by spend desc
   const sorted = [...placementRows].sort((a, b) => parseFloat(b.spend) - parseFloat(a.spend));
 
   placementBody.innerHTML = sorted.map(row => {
@@ -693,31 +685,31 @@ function truncate(str, max) {
 }
 
 const PLATFORM_LABELS = {
-  facebook:        'Facebook',
-  instagram:       'Instagram',
-  audience_network:'Audience Network',
-  messenger:       'Messenger',
+  facebook:         'Facebook',
+  instagram:        'Instagram',
+  audience_network: 'Audience Network',
+  messenger:        'Messenger',
 };
 function formatPlatform(p) {
   return PLATFORM_LABELS[p] || (p ? p.charAt(0).toUpperCase() + p.slice(1) : '—');
 }
 
 const PLACEMENT_LABELS = {
-  feed:                        'Feed',
-  right_hand_column:           'Right Column',
-  story:                       'Stories',
-  reels:                       'Reels',
-  video_feeds:                 'Video Feeds',
-  search:                      'Search',
-  instant_article:             'Instant Articles',
-  marketplace:                 'Marketplace',
-  instream_video:              'In-Stream Video',
-  rewarded_video:              'Rewarded Video',
-  an_classic:                  'AN Classic',
-  suggested_video:             'Suggested Video',
-  explore:                     'Explore',
-  profile_feed:                'Profile Feed',
-  biz_disco_feed:              'Business Explore',
+  feed:                  'Feed',
+  right_hand_column:     'Right Column',
+  story:                 'Stories',
+  reels:                 'Reels',
+  video_feeds:           'Video Feeds',
+  search:                'Search',
+  instant_article:       'Instant Articles',
+  marketplace:           'Marketplace',
+  instream_video:        'In-Stream Video',
+  rewarded_video:        'Rewarded Video',
+  an_classic:            'AN Classic',
+  suggested_video:       'Suggested Video',
+  explore:               'Explore',
+  profile_feed:          'Profile Feed',
+  biz_disco_feed:        'Business Explore',
 };
 function formatPlacement(p) {
   return PLACEMENT_LABELS[p] || (p ? p.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '—');
@@ -750,7 +742,7 @@ async function loadAccounts() {
 // Main data load
 // ---------------------------------------------------------------------------
 async function loadDashboard() {
-  const accountId = accountSelect.value;
+  const accountId  = accountSelect.value;
   const datePreset = dateSelect.value;
 
   if (!accountId) return;
@@ -761,13 +753,11 @@ async function loadDashboard() {
   setFilterTag(adFilterTag, null);
   setFilterTag(adsetFilterTag, null);
 
-  // Reset AI sidebar on new load
   aiBody.innerHTML = '<p class="ai-placeholder">Select a campaign, then click a button above.</p>';
   aiCampaignLabel.textContent = '';
   btnAiRecommend.disabled = true;
   btnAiReport.disabled    = true;
 
-  // Show loading state in all tables
   campaignBody.innerHTML  = loadingRow(10);
   adBody.innerHTML        = loadingRow(14);
   adsetBody.innerHTML     = loadingRow(4);
@@ -776,7 +766,6 @@ async function loadDashboard() {
 
   const qs = `account_id=${encodeURIComponent(accountId)}&date_preset=${encodeURIComponent(datePreset)}`;
 
-  // Fetch all endpoints in parallel
   const [insightsResult, campaignsResult, adsResult, adCreativesResult, adsetsResult, placementsResult] = await Promise.allSettled([
     apiFetch(`/api/insights?${qs}`),
     apiFetch(`/api/campaigns?account_id=${encodeURIComponent(accountId)}`),
@@ -786,11 +775,9 @@ async function loadDashboard() {
     apiFetch(`/api/placements?${qs}`),
   ]);
 
-  // --- Campaigns + summary cards ---
   const insightRows  = insightsResult.status  === 'fulfilled' ? insightsResult.value.data  || [] : [];
   const campaignRows = campaignsResult.status === 'fulfilled' ? campaignsResult.value.data || [] : [];
 
-  // Store for AI lookups
   allInsightRows = {};
   for (const row of insightRows) allInsightRows[row.campaign_name] = row;
   allCampaignRows = campaignRows;
@@ -803,7 +790,6 @@ async function loadDashboard() {
     showError(campaignsResult.reason?.message || 'Failed to load campaigns');
   }
 
-  // --- Ads ---
   allCreativeMap = buildCreativeMap(
     adCreativesResult.status === 'fulfilled' ? adCreativesResult.value.data || [] : []
   );
@@ -815,7 +801,6 @@ async function loadDashboard() {
     adBody.innerHTML = `<tr><td colspan="14" class="empty-row">Failed to load ads: ${adsResult.reason?.message}</td></tr>`;
   }
 
-  // --- Ad sets ---
   if (adsetsResult.status === 'fulfilled') {
     allAdsetRows = adsetsResult.value.data || [];
     renderAdsets(allAdsetRows);
@@ -824,7 +809,6 @@ async function loadDashboard() {
     adsetBody.innerHTML = `<tr><td colspan="4" class="empty-row">Failed to load ad sets: ${adsetsResult.reason?.message}</td></tr>`;
   }
 
-  // --- Placements ---
   if (placementsResult.status === 'fulfilled') {
     renderPlacements(placementsResult.value.data || []);
   } else {
@@ -836,9 +820,217 @@ async function loadDashboard() {
 }
 
 // ---------------------------------------------------------------------------
+// Settings Modal
+// ---------------------------------------------------------------------------
+function initSettingsModal(me) {
+  const overlay       = document.getElementById('settingsOverlay');
+  const closeBtn      = document.getElementById('settingsClose');
+  const tabs          = document.querySelectorAll('.modal-tab');
+  const panes         = document.querySelectorAll('.modal-pane');
+
+  // Show admin tab if admin
+  if (me.role === 'admin') {
+    document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('hidden'));
+  }
+
+  // Tab switching
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      panes.forEach(p => p.classList.add('hidden'));
+      tab.classList.add('active');
+      document.getElementById(`pane-${tab.dataset.tab}`).classList.remove('hidden');
+      if (tab.dataset.tab === 'admin') loadAdminUsers();
+      if (tab.dataset.tab === 'token') refreshTokenStatus();
+    });
+  });
+
+  // Open / close
+  settingsBtn.addEventListener('click', () => {
+    overlay.classList.remove('hidden');
+    refreshTokenStatus();
+  });
+  closeBtn.addEventListener('click',    () => overlay.classList.add('hidden'));
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.add('hidden'); });
+
+  // ---- Profile: Change Password ----
+  document.getElementById('changePasswordBtn').addEventListener('click', async () => {
+    const current  = document.getElementById('currentPassword').value;
+    const next     = document.getElementById('newPassword').value;
+    const confirm  = document.getElementById('confirmPassword').value;
+    const feedback = document.getElementById('profileFeedback');
+
+    feedback.className = 'modal-feedback';
+    if (!current || !next) return showFeedback(feedback, 'error', 'All fields are required.');
+    if (next !== confirm) return showFeedback(feedback, 'error', 'New passwords do not match.');
+    if (next.length < 8)  return showFeedback(feedback, 'error', 'Password must be at least 8 characters.');
+
+    try {
+      await apiFetch('/settings/password', {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ currentPassword: current, newPassword: next }),
+      });
+      showFeedback(feedback, 'success', 'Password updated.');
+      document.getElementById('currentPassword').value = '';
+      document.getElementById('newPassword').value     = '';
+      document.getElementById('confirmPassword').value = '';
+    } catch (err) {
+      showFeedback(feedback, 'error', err.message);
+    }
+  });
+
+  // ---- Meta Token ----
+  async function refreshTokenStatus() {
+    try {
+      const data = await apiFetch('/settings/meta-token-status');
+      const el   = document.getElementById('tokenStatus');
+      if (data.configured) {
+        el.textContent  = 'Configured ✓';
+        el.className    = 'token-status--ok';
+      } else {
+        el.textContent  = 'Not configured';
+        el.className    = 'token-status--missing';
+      }
+    } catch { /* ignore */ }
+  }
+
+  document.getElementById('saveTokenBtn').addEventListener('click', async () => {
+    const token    = document.getElementById('metaTokenInput').value.trim();
+    const feedback = document.getElementById('tokenFeedback');
+    if (!token) return showFeedback(feedback, 'error', 'Please paste your Meta Access Token.');
+    try {
+      await apiFetch('/settings/meta-token', {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ token }),
+      });
+      showFeedback(feedback, 'success', 'Token saved successfully. Refresh accounts to use it.');
+      document.getElementById('metaTokenInput').value = '';
+      refreshTokenStatus();
+    } catch (err) {
+      showFeedback(feedback, 'error', err.message);
+    }
+  });
+
+  // ---- Admin: Users ----
+  async function loadAdminUsers() {
+    const tbody    = document.getElementById('adminUserBody');
+    const feedback = document.getElementById('adminFeedback');
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-row"><span class="spinner"></span> Loading…</td></tr>`;
+    try {
+      const { users } = await apiFetch('/admin/users');
+      if (users.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" class="empty-row">No users found.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = users.map(u => `
+        <tr>
+          <td>${escHtml(u.username)}</td>
+          <td>${escHtml(u.email)}</td>
+          <td>${escHtml(u.role)}</td>
+          <td>${u.has_meta_token ? '<span class="token-status--ok">Yes</span>' : '<span class="token-status--missing">No</span>'}</td>
+          <td>
+            <button class="btn-small btn-reset-pwd" data-id="${u.id}" data-name="${escHtml(u.username)}">Reset pwd</button>
+            ${u.id !== me.id ? `<button class="btn-small btn-delete-user" data-id="${u.id}" data-name="${escHtml(u.username)}">Delete</button>` : ''}
+          </td>
+        </tr>
+      `).join('');
+
+      tbody.querySelectorAll('.btn-delete-user').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm(`Delete user "${btn.dataset.name}"? This cannot be undone.`)) return;
+          try {
+            await apiFetch(`/admin/users/${btn.dataset.id}`, { method: 'DELETE' });
+            showFeedback(feedback, 'success', `User "${btn.dataset.name}" deleted.`);
+            loadAdminUsers();
+          } catch (err) {
+            showFeedback(feedback, 'error', err.message);
+          }
+        });
+      });
+
+      tbody.querySelectorAll('.btn-reset-pwd').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const pwd = prompt(`New password for "${btn.dataset.name}" (min 8 chars):`);
+          if (!pwd) return;
+          if (pwd.length < 8) { alert('Password must be at least 8 characters.'); return; }
+          try {
+            await apiFetch(`/admin/users/${btn.dataset.id}/password`, {
+              method:  'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({ newPassword: pwd }),
+            });
+            showFeedback(feedback, 'success', `Password reset for "${btn.dataset.name}".`);
+          } catch (err) {
+            showFeedback(feedback, 'error', err.message);
+          }
+        });
+      });
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-row">Error: ${err.message}</td></tr>`;
+    }
+  }
+
+  // ---- Admin: Create User ----
+  document.getElementById('createUserBtn').addEventListener('click', async () => {
+    const username = document.getElementById('newUsername').value.trim();
+    const email    = document.getElementById('newEmail').value.trim();
+    const password = document.getElementById('newUserPassword').value;
+    const role     = document.getElementById('newUserRole').value;
+    const feedback = document.getElementById('adminFeedback');
+
+    if (!username || !email || !password) return showFeedback(feedback, 'error', 'All fields are required.');
+
+    try {
+      await apiFetch('/admin/users', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ username, email, password, role }),
+      });
+      showFeedback(feedback, 'success', `User "${username}" created.`);
+      document.getElementById('newUsername').value     = '';
+      document.getElementById('newEmail').value        = '';
+      document.getElementById('newUserPassword').value = '';
+      loadAdminUsers();
+    } catch (err) {
+      showFeedback(feedback, 'error', err.message);
+    }
+  });
+}
+
+function showFeedback(el, type, msg) {
+  el.textContent = msg;
+  el.className   = type === 'success' ? 'modal-feedback modal-success' : 'modal-feedback modal-error';
+}
+
+function escHtml(str) {
+  return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 async function init() {
+  // Auth check — redirect to login if not authenticated
+  let me;
+  try {
+    me = await apiFetch('/auth/me');
+  } catch {
+    // apiFetch already redirects on 401
+    return;
+  }
+
+  headerUsername.textContent = me.username;
+
+  // Logout
+  logoutBtn.addEventListener('click', async () => {
+    await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+    window.location.href = '/login.html';
+  });
+
+  initSettingsModal(me);
+
   await loadAccounts();
 
   accountSelect.addEventListener('change', loadDashboard);
@@ -857,8 +1049,7 @@ async function init() {
     if (name && id) generatePdfReport(name, id);
   });
 
-  // Auto-select first account if only one
-  if (accountSelect.options.length === 2) { // "— Select —" + one account
+  if (accountSelect.options.length === 2) {
     accountSelect.selectedIndex = 1;
     loadDashboard();
   }

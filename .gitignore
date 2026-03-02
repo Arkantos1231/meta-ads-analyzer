@@ -10,3 +10,6 @@ Thumbs.db
 
 # Node
 node_modules/
+
+# SQLite database (data goes in Railway volume, not git)
+dashboard/data/
