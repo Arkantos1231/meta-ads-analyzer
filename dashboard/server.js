@@ -350,27 +350,31 @@ Use the exact numbers from the data. Be direct and specific.`;
 // ---------------------------------------------------------------------------
 // Route handlers (all receive user object with metaToken)
 // ---------------------------------------------------------------------------
+function requireMetaToken(user) {
+  if (!user.metaToken) throw Object.assign(new Error('Meta Access Token no configurado — ve a Configuración → Credenciales Meta'), { status: 400 });
+}
+
 const routes = {
   '/api/accounts': async (_query, user) => {
-    if (!user.metaToken) throw Object.assign(new Error('Meta token not configured — go to Settings'), { status: 400 });
+    requireMetaToken(user);
     return metaGet('/me/adaccounts', {
       fields: 'name,account_id,account_status,currency',
       limit: 100,
-    }, user.metaToken);
+    }, user.metaToken, user.metaAppSecret);
   },
 
   '/api/campaigns': async (query, user) => {
-    if (!user.metaToken) throw Object.assign(new Error('Meta token not configured — go to Settings'), { status: 400 });
+    requireMetaToken(user);
     const { account_id } = query;
     if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
     return metaGet(`/act_${account_id}/campaigns`, {
       fields: 'id,name,status,objective,daily_budget,lifetime_budget,effective_status',
       limit: 100,
-    }, user.metaToken);
+    }, user.metaToken, user.metaAppSecret);
   },
 
   '/api/insights': async (query, user) => {
-    if (!user.metaToken) throw Object.assign(new Error('Meta token not configured — go to Settings'), { status: 400 });
+    requireMetaToken(user);
     const { account_id, date_preset = 'last_30d' } = query;
     if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
     return metaGet(`/act_${account_id}/insights`, {
@@ -391,31 +395,31 @@ const routes = {
         'frequency',
       ].join(','),
       limit: 100,
-    }, user.metaToken);
+    }, user.metaToken, user.metaAppSecret);
   },
 
   '/api/adsets': async (query, user) => {
-    if (!user.metaToken) throw Object.assign(new Error('Meta token not configured — go to Settings'), { status: 400 });
+    requireMetaToken(user);
     const { account_id } = query;
     if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
     return metaGet(`/act_${account_id}/adsets`, {
       fields: 'name,status,effective_status,learning_stage_info,campaign_id,daily_budget,bid_strategy',
       limit: 200,
-    }, user.metaToken);
+    }, user.metaToken, user.metaAppSecret);
   },
 
   '/api/ad-creatives': async (query, user) => {
-    if (!user.metaToken) throw Object.assign(new Error('Meta token not configured — go to Settings'), { status: 400 });
+    requireMetaToken(user);
     const { account_id } = query;
     if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
     return metaGet(`/act_${account_id}/ads`, {
       fields: 'id,name,creative{id,thumbnail_url,image_url}',
       limit: 500,
-    }, user.metaToken);
+    }, user.metaToken, user.metaAppSecret);
   },
 
   '/api/ads': async (query, user) => {
-    if (!user.metaToken) throw Object.assign(new Error('Meta token not configured — go to Settings'), { status: 400 });
+    requireMetaToken(user);
     const { account_id, date_preset = 'last_30d' } = query;
     if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
     return metaGet(`/act_${account_id}/insights`, {
@@ -439,11 +443,11 @@ const routes = {
         'frequency',
       ].join(','),
       limit: 500,
-    }, user.metaToken);
+    }, user.metaToken, user.metaAppSecret);
   },
 
   '/api/placements': async (query, user) => {
-    if (!user.metaToken) throw Object.assign(new Error('Meta token not configured — go to Settings'), { status: 400 });
+    requireMetaToken(user);
     const { account_id, date_preset = 'last_30d' } = query;
     if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
     return metaGet(`/act_${account_id}/insights`, {
@@ -460,7 +464,7 @@ const routes = {
         'actions',
       ].join(','),
       limit: 200,
-    }, user.metaToken);
+    }, user.metaToken, user.metaAppSecret);
   },
 };
 
@@ -575,7 +579,9 @@ const server = http.createServer(async (req, res) => {
         username:     user.username,
         email:        user.email,
         role:         user.role,
-        hasMetaToken: !!user.meta_token_enc,
+        hasToken:     !!user.meta_token_enc,
+        hasAppId:     !!user.meta_app_id_enc,
+        hasAppSecret: !!user.meta_app_secret_enc,
       });
     } catch (err) {
       sendJson(res, err.status || 401, { error: err.message });
@@ -587,15 +593,38 @@ const server = http.createServer(async (req, res) => {
   // Settings endpoints
   // ------------------------------------------------------------------
 
-  // PUT /settings/meta-token
-  if (method === 'PUT' && pathname === '/settings/meta-token') {
+  // PUT /settings/meta-credentials  { token?, appId?, appSecret? }
+  // Each field is independent: non-empty string = save; empty string = clear; absent = leave unchanged
+  if (method === 'PUT' && pathname === '/settings/meta-credentials') {
     try {
       const user = requireAuth(req);
       const body = await readBody(req);
-      const { token } = JSON.parse(body);
-      if (!token || !token.trim()) return sendJson(res, 400, { error: 'token is required' });
-      const { enc, iv, tag } = encrypt(token.trim());
-      updateUserMetaToken(user.id, enc, iv, tag);
+      const { token, appId, appSecret } = JSON.parse(body);
+
+      if (token !== undefined) {
+        if (token.trim()) {
+          const r = encrypt(token.trim());
+          updateUserMetaToken(user.id, r.enc, r.iv, r.tag);
+        } else {
+          clearUserMetaField(user.id, 'meta_token');
+        }
+      }
+      if (appId !== undefined) {
+        if (appId.trim()) {
+          const r = encrypt(appId.trim());
+          updateUserMetaAppId(user.id, r.enc, r.iv, r.tag);
+        } else {
+          clearUserMetaField(user.id, 'meta_app_id');
+        }
+      }
+      if (appSecret !== undefined) {
+        if (appSecret.trim()) {
+          const r = encrypt(appSecret.trim());
+          updateUserMetaAppSecret(user.id, r.enc, r.iv, r.tag);
+        } else {
+          clearUserMetaField(user.id, 'meta_app_secret');
+        }
+      }
       sendJson(res, 200, { ok: true });
     } catch (err) {
       sendJson(res, err.status || 500, { error: err.message });
@@ -603,11 +632,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // GET /settings/meta-token-status
-  if (method === 'GET' && pathname === '/settings/meta-token-status') {
+  // GET /settings/meta-credentials-status
+  if (method === 'GET' && pathname === '/settings/meta-credentials-status') {
     try {
       const user = requireAuth(req);
-      sendJson(res, 200, { configured: !!user.meta_token_enc });
+      sendJson(res, 200, {
+        hasToken:     !!user.meta_token_enc,
+        hasAppId:     !!user.meta_app_id_enc,
+        hasAppSecret: !!user.meta_app_secret_enc,
+      });
     } catch (err) {
       sendJson(res, err.status || 401, { error: err.message });
     }

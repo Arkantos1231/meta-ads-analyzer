@@ -841,14 +841,14 @@ function initSettingsModal(me) {
       tab.classList.add('active');
       document.getElementById(`pane-${tab.dataset.tab}`).classList.remove('hidden');
       if (tab.dataset.tab === 'admin') loadAdminUsers();
-      if (tab.dataset.tab === 'token') refreshTokenStatus();
+      if (tab.dataset.tab === 'token') refreshCredsStatus();
     });
   });
 
   // Open / close
   settingsBtn.addEventListener('click', () => {
     overlay.classList.remove('hidden');
-    refreshTokenStatus();
+    refreshCredsStatus();
   });
   closeBtn.addEventListener('click',    () => overlay.classList.add('hidden'));
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.add('hidden'); });
@@ -880,34 +880,45 @@ function initSettingsModal(me) {
     }
   });
 
-  // ---- Meta Token ----
-  async function refreshTokenStatus() {
+  // ---- Meta Credentials ----
+  async function refreshCredsStatus() {
     try {
-      const data = await apiFetch('/settings/meta-token-status');
-      const el   = document.getElementById('tokenStatus');
-      if (data.configured) {
-        el.textContent  = 'Configured ✓';
-        el.className    = 'token-status--ok';
-      } else {
-        el.textContent  = 'Not configured';
-        el.className    = 'token-status--missing';
-      }
+      const data = await apiFetch('/settings/meta-credentials-status');
+      setCredStatus('statusAppId',     data.hasAppId);
+      setCredStatus('statusAppSecret', data.hasAppSecret);
+      setCredStatus('statusToken',     data.hasToken);
     } catch { /* ignore */ }
   }
 
-  document.getElementById('saveTokenBtn').addEventListener('click', async () => {
-    const token    = document.getElementById('metaTokenInput').value.trim();
-    const feedback = document.getElementById('tokenFeedback');
-    if (!token) return showFeedback(feedback, 'error', 'Please paste your Meta Access Token.');
+  function setCredStatus(elId, ok) {
+    const el = document.getElementById(elId);
+    el.textContent = ok ? '✓' : '✗';
+    el.className   = ok ? 'token-status--ok' : 'token-status--missing';
+  }
+
+  document.getElementById('saveCredsBtn').addEventListener('click', async () => {
+    const appId     = document.getElementById('metaAppIdInput').value.trim();
+    const appSecret = document.getElementById('metaAppSecretInput').value.trim();
+    const token     = document.getElementById('metaTokenInput').value.trim();
+    const feedback  = document.getElementById('tokenFeedback');
+
+    // At least one field must be provided
+    if (appId === '' && appSecret === '' && token === '') {
+      return showFeedback(feedback, 'error', 'Completa al menos un campo antes de guardar.');
+    }
+
     try {
-      await apiFetch('/settings/meta-token', {
+      await apiFetch('/settings/meta-credentials', {
         method:  'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ token }),
+        // Only send fields the user interacted with (all three in this case)
+        body: JSON.stringify({ appId, appSecret, token }),
       });
-      showFeedback(feedback, 'success', 'Token saved successfully. Refresh accounts to use it.');
-      document.getElementById('metaTokenInput').value = '';
-      refreshTokenStatus();
+      showFeedback(feedback, 'success', 'Credenciales guardadas. Recarga las cuentas para usar el nuevo token.');
+      document.getElementById('metaAppIdInput').value     = '';
+      document.getElementById('metaAppSecretInput').value = '';
+      document.getElementById('metaTokenInput').value     = '';
+      refreshCredsStatus();
     } catch (err) {
       showFeedback(feedback, 'error', err.message);
     }
@@ -924,12 +935,20 @@ function initSettingsModal(me) {
         tbody.innerHTML = `<tr><td colspan="5" class="empty-row">No users found.</td></tr>`;
         return;
       }
+      const credIcon = (ok) => ok
+        ? '<span class="token-status--ok">✓</span>'
+        : '<span class="token-status--missing">✗</span>';
+
       tbody.innerHTML = users.map(u => `
         <tr>
           <td>${escHtml(u.username)}</td>
           <td>${escHtml(u.email)}</td>
           <td>${escHtml(u.role)}</td>
-          <td>${u.has_meta_token ? '<span class="token-status--ok">Yes</span>' : '<span class="token-status--missing">No</span>'}</td>
+          <td style="white-space:nowrap">
+            ID ${credIcon(u.has_meta_app_id)}
+            Secret ${credIcon(u.has_meta_app_secret)}
+            Token ${credIcon(u.has_meta_token)}
+          </td>
           <td>
             <button class="btn-small btn-reset-pwd" data-id="${u.id}" data-name="${escHtml(u.username)}">Reset pwd</button>
             ${u.id !== me.id ? `<button class="btn-small btn-delete-user" data-id="${u.id}" data-name="${escHtml(u.username)}">Delete</button>` : ''}

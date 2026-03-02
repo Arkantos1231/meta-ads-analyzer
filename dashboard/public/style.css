@@ -767,6 +767,24 @@ body.login-page {
   margin-bottom: 0.75rem;
 }
 
+.meta-creds-status {
+  display: flex;
+  gap: 1.2rem;
+  margin-bottom: 1rem;
+  padding: 0.6rem 0.85rem;
+  background: var(--surface2);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.cred-status-item {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
 .token-status--ok {
   color: var(--green);
   font-weight: 600;

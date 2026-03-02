@@ -232,7 +232,7 @@
       <!-- Tab bar -->
       <div class="modal-tabs">
         <button class="modal-tab active" data-tab="profile">Profile</button>
-        <button class="modal-tab" data-tab="token">Meta Token</button>
+        <button class="modal-tab" data-tab="token">Credenciales Meta</button>
         <button class="modal-tab admin-only hidden" data-tab="admin">Admin</button>
       </div>
 
@@ -257,19 +257,37 @@
         </div>
       </div>
 
-      <!-- Meta Token pane -->
+      <!-- Meta Credentials pane -->
       <div class="modal-pane hidden" id="pane-token">
         <div class="modal-section">
-          <h4>Meta Access Token</h4>
-          <p class="modal-hint">Your token is stored encrypted on the server. It is never shared with other users.</p>
-          <div class="token-status-row">
-            Status: <span id="tokenStatus" class="token-status--missing">Not configured</span>
+          <h4>Credenciales de Meta</h4>
+          <p class="modal-hint">Todas las credenciales se guardan cifradas en el servidor y son exclusivas de tu cuenta. Dejar un campo vacío y guardar lo borrará.</p>
+
+          <div class="meta-creds-status">
+            <span class="cred-status-item">
+              App ID <span id="statusAppId" class="token-status--missing">✗</span>
+            </span>
+            <span class="cred-status-item">
+              App Secret <span id="statusAppSecret" class="token-status--missing">✗</span>
+            </span>
+            <span class="cred-status-item">
+              Access Token <span id="statusToken" class="token-status--missing">✗</span>
+            </span>
+          </div>
+
+          <div class="field-group">
+            <label for="metaAppIdInput">App ID</label>
+            <input type="text" id="metaAppIdInput" placeholder="1316761413613894" autocomplete="off" />
           </div>
           <div class="field-group">
-            <label for="metaTokenInput">Paste your Meta Access Token</label>
+            <label for="metaAppSecretInput">App Secret</label>
+            <input type="password" id="metaAppSecretInput" placeholder="e4517965eeda..." autocomplete="new-password" />
+          </div>
+          <div class="field-group">
+            <label for="metaTokenInput">Access Token</label>
             <textarea id="metaTokenInput" rows="4" placeholder="EAABwzLixnjYBO..."></textarea>
           </div>
-          <button class="btn-primary" id="saveTokenBtn">Save Token</button>
+          <button class="btn-primary" id="saveCredsBtn">Guardar credenciales</button>
           <div class="modal-feedback hidden" id="tokenFeedback"></div>
         </div>
       </div>
@@ -281,11 +299,11 @@
           <table class="admin-user-table" id="adminUserTable">
             <thead>
               <tr>
-                <th>Username</th>
+                <th>Usuario</th>
                 <th>Email</th>
-                <th>Role</th>
-                <th>Token</th>
-                <th>Actions</th>
+                <th>Rol</th>
+                <th>Credenciales Meta</th>
+                <th>Acciones</th>
               </tr>
             </thead>
             <tbody id="adminUserBody">
