@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meta Ads Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header class="header">
+    <div class="header-left">
+      <span class="logo">📊</span>
+      <span class="brand">Meta Ads Dashboard</span>
+    </div>
+    <div class="header-controls">
+      <div class="control-group">
+        <label for="accountSelect">Account</label>
+        <select id="accountSelect">
+          <option value="">Loading accounts…</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label for="dateSelect">Date range</label>
+        <select id="dateSelect">
+          <option value="last_7d">Last 7 days</option>
+          <option value="last_30d" selected>Last 30 days</option>
+          <option value="last_90d">Last 90 days</option>
+          <option value="maximum">All time</option>
+        </select>
+      </div>
+      <button id="themeBtn" class="btn-theme" title="Toggle light/dark theme">☀</button>
+      <button id="refreshBtn" class="btn-refresh" title="Refresh data">↻ Refresh</button>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- ERROR BANNER -->
+    <div id="errorBanner" class="error-banner hidden"></div>
+
+    <div class="main-layout">
+    <div class="main-content">
+
+    <!-- SUMMARY CARDS -->
+    <section class="cards-row" id="summaryCards">
+      <div class="card" id="card-spend">
+        <div class="card-label">Total Spend</div>
+        <div class="card-value" id="val-spend">—</div>
+        <div class="card-sub" id="sub-spend"></div>
+      </div>
+      <div class="card" id="card-roas">
+        <div class="card-label">Purchase ROAS</div>
+        <div class="card-value" id="val-roas">—</div>
+        <div class="card-sub" id="sub-roas"></div>
+      </div>
+      <div class="card" id="card-purchases">
+        <div class="card-label">Purchases</div>
+        <div class="card-value" id="val-purchases">—</div>
+        <div class="card-sub" id="sub-purchases"></div>
+      </div>
+      <div class="card" id="card-cpm">
+        <div class="card-label">CPM</div>
+        <div class="card-value" id="val-cpm">—</div>
+        <div class="card-sub" id="sub-cpm"></div>
+      </div>
+      <div class="card" id="card-ctr">
+        <div class="card-label">CTR</div>
+        <div class="card-value" id="val-ctr">—</div>
+        <div class="card-sub" id="sub-ctr"></div>
+      </div>
+    </section>
+
+    <!-- CAMPAIGN TABLE -->
+    <section class="section">
+      <div class="section-header">
+        <h2>Campaigns</h2>
+        <span class="section-badge" id="campaignCount"></span>
+      </div>
+      <div class="table-wrapper">
+        <table id="campaignTable">
+          <thead>
+            <tr>
+              <th>Campaign</th>
+              <th>Status</th>
+              <th>Objective</th>
+              <th class="num">Spend</th>
+              <th class="num">Impressions</th>
+              <th class="num">Clicks</th>
+              <th class="num">CTR</th>
+              <th class="num">CPM</th>
+              <th class="num">ROAS</th>
+              <th class="num">Purchases</th>
+            </tr>
+          </thead>
+          <tbody id="campaignBody">
+            <tr><td colspan="10" class="empty-row">Select an account to load data.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ADS TABLE -->
+    <section class="section">
+      <div class="section-header">
+        <h2>Ads</h2>
+        <span class="section-badge" id="adCount"></span>
+        <span class="filter-tag hidden" id="adFilterTag"></span>
+      </div>
+      <div class="table-wrapper">
+        <table id="adTable">
+          <thead>
+            <tr>
+              <th>Preview</th>
+              <th>Ad</th>
+              <th>Ad Set</th>
+              <th>Campaign</th>
+              <th class="num">Spend</th>
+              <th class="num">Impressions</th>
+              <th class="num">Reach</th>
+              <th class="num">Clicks</th>
+              <th class="num">CTR</th>
+              <th class="num">CPM</th>
+              <th class="num">CPC</th>
+              <th class="num">ROAS</th>
+              <th class="num">Purchases</th>
+              <th class="num">Rev</th>
+            </tr>
+          </thead>
+          <tbody id="adBody">
+            <tr><td colspan="14" class="empty-row">Select an account to load data.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- LEARNING PHASE -->
+    <section class="section">
+      <div class="section-header">
+        <h2>Learning Phase — Ad Sets</h2>
+        <span class="section-badge" id="adsetCount"></span>
+        <span class="filter-tag hidden" id="adsetFilterTag"></span>
+      </div>
+      <p class="section-hint">Ad sets in <strong>Learning</strong> or <strong>Learning Limited</strong> may have unstable delivery and higher costs. Avoid editing them until they exit the learning phase.</p>
+      <div class="table-wrapper">
+        <table id="adsetTable">
+          <thead>
+            <tr>
+              <th>Ad Set</th>
+              <th>Effective Status</th>
+              <th>Learning Status</th>
+              <th>Learning Stage</th>
+            </tr>
+          </thead>
+          <tbody id="adsetBody">
+            <tr><td colspan="4" class="empty-row">Select an account to load data.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- PLACEMENT BREAKDOWN -->
+    <section class="section">
+      <div class="section-header">
+        <h2>Breakdown by Placement</h2>
+        <span class="section-badge" id="placementCount"></span>
+      </div>
+      <div class="table-wrapper">
+        <table id="placementTable">
+          <thead>
+            <tr>
+              <th>Platform</th>
+              <th>Placement</th>
+              <th class="num">Spend</th>
+              <th class="num">Impressions</th>
+              <th class="num">Clicks</th>
+              <th class="num">CPM</th>
+              <th class="num">CPC</th>
+              <th class="num">ROAS</th>
+              <th class="num">Purchases</th>
+            </tr>
+          </thead>
+          <tbody id="placementBody">
+            <tr><td colspan="9" class="empty-row">Select an account to load data.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    </div><!-- /.main-content -->
+
+    <!-- AI RECOMMENDATIONS SIDEBAR -->
+    <aside class="ai-sidebar" id="aiSection">
+      <div class="section-header">
+        <span class="ai-icon">✦</span>
+        <h2>AI Recommendations</h2>
+        <span class="section-badge" id="aiCampaignLabel"></span>
+      </div>
+      <div class="ai-actions">
+        <button id="btnAiRecommend" class="btn-ai-action" disabled>
+          ✦ Generate Recommendations
+        </button>
+        <button id="btnAiReport" class="btn-ai-report" disabled>
+          📄 Generate PDF Report
+        </button>
+      </div>
+      <div id="aiBody">
+        <p class="ai-placeholder">Select a campaign, then click a button above.</p>
+      </div>
+    </aside>
+
+    </div><!-- /.main-layout -->
+
+  </main>
+
+  <footer class="footer">
+    Meta Graph API v21.0 &nbsp;·&nbsp; Data refreshed: <span id="lastRefresh">—</span>
+  </footer>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>

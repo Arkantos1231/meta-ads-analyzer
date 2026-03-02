@@ -1,0 +1,12 @@
+{
+  "name": "meta-ads-dashboard",
+  "version": "1.0.0",
+  "description": "Meta Ads Dashboard — lightweight Node.js proxy + vanilla JS frontend",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  }
+}
