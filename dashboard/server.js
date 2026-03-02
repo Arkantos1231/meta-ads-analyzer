@@ -36,17 +36,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
 // Load credentials
+// Priority: process.env (Railway / any host) → .env.meta-ads file (local dev)
 // ---------------------------------------------------------------------------
 const ENV_FILE = path.resolve(__dirname, '.env.meta-ads');
 
-function loadEnv(filePath) {
-  if (!fs.existsSync(filePath)) {
-    console.error(`\n❌  Credentials file not found: ${filePath}`);
-    console.error('   Create the file manually in the dashboard/ folder.\n');
-    process.exit(1);
-  }
-  const lines = fs.readFileSync(filePath, 'utf8').split('\n');
-  const env = {};
+if (fs.existsSync(ENV_FILE)) {
+  // Local dev: load file and set any missing env vars from it
+  const lines = fs.readFileSync(ENV_FILE, 'utf8').split('\n');
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
@@ -55,24 +51,23 @@ function loadEnv(filePath) {
     let key = trimmed.slice(0, idx).trim();
     if (key.startsWith('export ')) key = key.slice(7).trim();
     const val = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
-    env[key] = val;
+    // Don't overwrite vars already set in the environment
+    if (!process.env[key]) process.env[key] = val;
   }
-  return env;
+  console.log('📄  Loaded .env.meta-ads');
+} else {
+  console.log('ℹ️   No .env.meta-ads file — using environment variables');
 }
 
-const env = loadEnv(ENV_FILE);
-
-if (!env.ENCRYPTION_KEY) {
-  console.error('❌  ENCRYPTION_KEY is missing from .env.meta-ads');
-  console.error('   Generate one: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+if (!process.env.ENCRYPTION_KEY) {
+  console.error('❌  ENCRYPTION_KEY is not set.');
+  console.error('   Railway: add it in the Variables tab.');
+  console.error('   Local:   add it to dashboard/.env.meta-ads');
+  console.error('   Generate: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
   process.exit(1);
 }
 
-// Expose to db.js (which reads from process.env)
-process.env.ENCRYPTION_KEY = env.ENCRYPTION_KEY;
-if (env.DB_PATH) process.env.DB_PATH = env.DB_PATH;
-
-const OPENAI_API_KEY = env.OPENAI_API_KEY || null;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || null;
 if (!OPENAI_API_KEY) console.warn('⚠️  OPENAI_API_KEY missing — AI recommendations disabled');
 
 const GRAPH_BASE = 'https://graph.facebook.com/v21.0';
