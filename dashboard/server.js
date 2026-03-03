@@ -70,6 +70,16 @@ if (!process.env.ENCRYPTION_KEY) {
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || null;
 if (!OPENAI_API_KEY) console.warn('⚠️  OPENAI_API_KEY missing — AI recommendations disabled');
 
+const META_APP_ID     = process.env.META_APP_ID     || null;
+const META_APP_SECRET = process.env.META_APP_SECRET || null;
+const APP_URL         = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+
+if (META_APP_ID && META_APP_SECRET) {
+  console.log('✅  Facebook OAuth enabled');
+} else {
+  console.log('ℹ️   META_APP_ID / META_APP_SECRET not set — Facebook OAuth disabled (manual token only)');
+}
+
 const GRAPH_BASE = 'https://graph.facebook.com/v21.0';
 
 // ---------------------------------------------------------------------------
@@ -571,15 +581,109 @@ const server = http.createServer(async (req, res) => {
     try {
       const user = requireAuth(req);
       sendJson(res, 200, {
-        username:     user.username,
-        email:        user.email,
-        role:         user.role,
-        hasToken:     !!user.meta_token_enc,
-        hasAppId:     !!user.meta_app_id_enc,
-        hasAppSecret: !!user.meta_app_secret_enc,
+        username:      user.username,
+        email:         user.email,
+        role:          user.role,
+        hasToken:      !!user.meta_token_enc,
+        hasAppId:      !!user.meta_app_id_enc,
+        hasAppSecret:  !!user.meta_app_secret_enc,
+        oauthAvailable: !!(META_APP_ID && META_APP_SECRET),
       });
     } catch (err) {
       sendJson(res, err.status || 401, { error: err.message });
+    }
+    return;
+  }
+
+  // ------------------------------------------------------------------
+  // Facebook OAuth endpoints
+  // ------------------------------------------------------------------
+
+  // GET /auth/facebook — start OAuth flow
+  if (method === 'GET' && pathname === '/auth/facebook') {
+    if (!META_APP_ID || !META_APP_SECRET) {
+      res.writeHead(302, { Location: '/?error=OAuth+not+configured' });
+      res.end();
+      return;
+    }
+    try {
+      requireAuth(req);
+    } catch {
+      res.writeHead(302, { Location: '/login.html' });
+      res.end();
+      return;
+    }
+    const state  = crypto.randomBytes(16).toString('hex');
+    const params = new URLSearchParams({
+      client_id:     META_APP_ID,
+      redirect_uri:  `${APP_URL}/auth/facebook/callback`,
+      scope:         'ads_read,ads_management,business_management',
+      state,
+      response_type: 'code',
+    });
+    res.writeHead(302, {
+      Location:   `https://www.facebook.com/v21.0/dialog/oauth?${params}`,
+      'Set-Cookie': `oauth_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600`,
+    });
+    res.end();
+    return;
+  }
+
+  // GET /auth/facebook/callback — Facebook redirects here with ?code=
+  if (method === 'GET' && pathname === '/auth/facebook/callback') {
+    const p           = Object.fromEntries(parsedUrl.searchParams.entries());
+    const cookieHdr   = req.headers.cookie || '';
+    const stateMatch  = cookieHdr.match(/(?:^|;\s*)oauth_state=([^;]+)/);
+    const clearState  = 'oauth_state=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0';
+
+    // Validate CSRF state
+    if (!stateMatch || stateMatch[1] !== p.state) {
+      res.writeHead(302, { Location: '/?error=invalid_oauth_state', 'Set-Cookie': clearState });
+      res.end();
+      return;
+    }
+
+    if (p.error) {
+      res.writeHead(302, { Location: `/?error=${encodeURIComponent(p.error_description || p.error)}`, 'Set-Cookie': clearState });
+      res.end();
+      return;
+    }
+
+    try {
+      const user = requireAuth(req);
+
+      // Exchange code → short-lived token
+      const tokenRes  = await fetch(`${GRAPH_BASE}/oauth/access_token?${new URLSearchParams({
+        client_id:    META_APP_ID,
+        client_secret: META_APP_SECRET,
+        redirect_uri: `${APP_URL}/auth/facebook/callback`,
+        code:          p.code,
+      })}`);
+      const tokenJson = await tokenRes.json();
+      if (tokenJson.error) throw new Error(tokenJson.error.message);
+
+      // Exchange short-lived → long-lived token (~60 days)
+      const longRes  = await fetch(`${GRAPH_BASE}/oauth/access_token?${new URLSearchParams({
+        grant_type:        'fb_exchange_token',
+        client_id:         META_APP_ID,
+        client_secret:     META_APP_SECRET,
+        fb_exchange_token: tokenJson.access_token,
+      })}`);
+      const longJson = await longRes.json();
+      if (longJson.error) throw new Error(longJson.error.message);
+
+      // Store token encrypted per-user
+      const { enc, iv, tag } = encrypt(longJson.access_token);
+      updateUserMetaToken(user.id, enc, iv, tag);
+
+      res.writeHead(302, {
+        Location:    '/?connected=facebook',
+        'Set-Cookie': clearState,
+      });
+      res.end();
+    } catch (err) {
+      res.writeHead(302, { Location: `/?error=${encodeURIComponent(err.message)}`, 'Set-Cookie': clearState });
+      res.end();
     }
     return;
   }

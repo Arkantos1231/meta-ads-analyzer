@@ -833,6 +833,12 @@ function initSettingsModal(me) {
     document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('hidden'));
   }
 
+  // Show OAuth button if server has Meta App credentials configured
+  if (me.oauthAvailable) {
+    const oauthSection = document.getElementById('oauthSection');
+    if (oauthSection) oauthSection.classList.remove('hidden');
+  }
+
   // Tab switching
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
@@ -1041,6 +1047,29 @@ async function init() {
   }
 
   headerUsername.textContent = me.username;
+
+  // Handle OAuth redirect-back params
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.has('connected')) {
+    // Show success — open settings → Meta credentials tab and show toast
+    history.replaceState({}, '', '/');
+    setTimeout(() => {
+      document.getElementById('settingsOverlay').classList.remove('hidden');
+      document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.modal-pane').forEach(p => p.classList.add('hidden'));
+      const tokenTab  = document.querySelector('[data-tab="token"]');
+      const tokenPane = document.getElementById('pane-token');
+      if (tokenTab)  tokenTab.classList.add('active');
+      if (tokenPane) tokenPane.classList.remove('hidden');
+      // Show success feedback in the token pane
+      const feedback = document.getElementById('tokenFeedback');
+      if (feedback) showFeedback(feedback, 'success', '¡Cuenta de Facebook conectada! Token guardado correctamente.');
+    }, 150);
+  } else if (urlParams.has('error')) {
+    const msg = urlParams.get('error');
+    showError(`Facebook OAuth error: ${msg}`);
+    history.replaceState({}, '', '/');
+  }
 
   // Logout
   logoutBtn.addEventListener('click', async () => {
