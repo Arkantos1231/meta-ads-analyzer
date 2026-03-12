@@ -888,6 +888,28 @@ body.login-page {
   grid-column: 1 / -1;
 }
 
+/* ---- Windsor connection status ---- */
+.windsor-status-box {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.9rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.btn-generate-link {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  white-space: nowrap;
+}
+.btn-generate-link:hover { background: var(--accent); color: #fff; }
+
 /* ---- Facebook OAuth button ---- */
 .btn-facebook {
   display:         inline-flex;

@@ -83,11 +83,12 @@ export function getDb() {
     CREATE INDEX IF NOT EXISTS idx_sessions_expires  ON sessions(expires_at);
   `);
 
-  // Migrate: add App ID and App Secret columns if they don't exist yet
+  // Migrate: add columns if they don't exist yet
   const existingCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
   const newCols = [
     'meta_app_id_enc', 'meta_app_id_iv', 'meta_app_id_tag',
     'meta_app_secret_enc', 'meta_app_secret_iv', 'meta_app_secret_tag',
+    'windsor_datasource_id',
   ];
   for (const col of newCols) {
     if (!existingCols.includes(col)) {
@@ -115,13 +116,21 @@ export function getUserByUsername(username) {
 
 export function getAllUsers() {
   return getDb().prepare(`
-    SELECT id, username, email, role,
-           (meta_token_enc      IS NOT NULL) AS has_meta_token,
-           (meta_app_id_enc     IS NOT NULL) AS has_meta_app_id,
-           (meta_app_secret_enc IS NOT NULL) AS has_meta_app_secret,
-           created_at
+    SELECT id, username, email, role, windsor_datasource_id, created_at
     FROM users ORDER BY id
   `).all();
+}
+
+export function updateUserWindsorDatasource(userId, datasourceId) {
+  return getDb().prepare(`
+    UPDATE users SET windsor_datasource_id = ?, updated_at = unixepoch() WHERE id = ?
+  `).run(datasourceId, userId);
+}
+
+export function clearUserWindsorDatasource(userId) {
+  return getDb().prepare(`
+    UPDATE users SET windsor_datasource_id = NULL, updated_at = unixepoch() WHERE id = ?
+  `).run(userId);
 }
 
 export function createUser({ username, email, passwordHash, role = 'user' }) {

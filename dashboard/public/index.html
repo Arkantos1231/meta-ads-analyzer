@@ -115,7 +115,6 @@
         <table id="adTable">
           <thead>
             <tr>
-              <th>Preview</th>
               <th>Ad</th>
               <th>Ad Set</th>
               <th>Campaign</th>
@@ -132,32 +131,29 @@
             </tr>
           </thead>
           <tbody id="adBody">
-            <tr><td colspan="14" class="empty-row">Select an account to load data.</td></tr>
+            <tr><td colspan="13" class="empty-row">Select an account to load data.</td></tr>
           </tbody>
         </table>
       </div>
     </section>
 
-    <!-- LEARNING PHASE -->
+    <!-- AD SETS -->
     <section class="section">
       <div class="section-header">
-        <h2>Learning Phase — Ad Sets</h2>
+        <h2>Ad Sets</h2>
         <span class="section-badge" id="adsetCount"></span>
         <span class="filter-tag hidden" id="adsetFilterTag"></span>
       </div>
-      <p class="section-hint">Ad sets in <strong>Learning</strong> or <strong>Learning Limited</strong> may have unstable delivery and higher costs. Avoid editing them until they exit the learning phase.</p>
       <div class="table-wrapper">
         <table id="adsetTable">
           <thead>
             <tr>
               <th>Ad Set</th>
-              <th>Effective Status</th>
-              <th>Learning Status</th>
-              <th>Learning Stage</th>
+              <th>Status</th>
             </tr>
           </thead>
           <tbody id="adsetBody">
-            <tr><td colspan="4" class="empty-row">Select an account to load data.</td></tr>
+            <tr><td colspan="2" class="empty-row">Select an account to load data.</td></tr>
           </tbody>
         </table>
       </div>
@@ -218,7 +214,7 @@
   </main>
 
   <footer class="footer">
-    Meta Graph API v21.0 &nbsp;·&nbsp; Data refreshed: <span id="lastRefresh">—</span>
+    Powered by Windsor.ai &nbsp;·&nbsp; Data refreshed: <span id="lastRefresh">—</span>
   </footer>
 
   <!-- SETTINGS MODAL -->
@@ -232,7 +228,7 @@
       <!-- Tab bar -->
       <div class="modal-tabs">
         <button class="modal-tab active" data-tab="profile">Profile</button>
-        <button class="modal-tab" data-tab="token">Credenciales Meta</button>
+        <button class="modal-tab" data-tab="token">Conexión</button>
         <button class="modal-tab admin-only hidden" data-tab="admin">Admin</button>
       </div>
 
@@ -257,47 +253,15 @@
         </div>
       </div>
 
-      <!-- Meta Credentials pane -->
+      <!-- Conexión pane -->
       <div class="modal-pane hidden" id="pane-token">
         <div class="modal-section">
-          <h4>Credenciales de Meta</h4>
-          <p class="modal-hint">Todas las credenciales se guardan cifradas en el servidor y son exclusivas de tu cuenta. Dejar un campo vacío y guardar lo borrará.</p>
-
-          <div class="meta-creds-status">
-            <span class="cred-status-item">
-              App ID <span id="statusAppId" class="token-status--missing">✗</span>
-            </span>
-            <span class="cred-status-item">
-              App Secret <span id="statusAppSecret" class="token-status--missing">✗</span>
-            </span>
-            <span class="cred-status-item">
-              Access Token <span id="statusToken" class="token-status--missing">✗</span>
-            </span>
+          <h4>Conexión Windsor</h4>
+          <div class="windsor-status-box">
+            <span id="windsorStatusIcon" class="token-status--missing">✗</span>
+            <span id="windsorStatusText">Sin cuenta conectada</span>
           </div>
-
-          <!-- OAuth connect (shown only when server has META_APP_ID + META_APP_SECRET) -->
-          <div id="oauthSection" class="hidden">
-            <a href="/auth/facebook" class="btn-facebook">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.41c0-3.025 1.791-4.697 4.533-4.697 1.313 0 2.686.236 2.686.236v2.971h-1.513c-1.491 0-1.956.93-1.956 1.884v2.27h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/></svg>
-              Conectar con Facebook
-            </a>
-            <p class="modal-hint" style="margin-top:0.5rem">Se solicitarán permisos para leer y gestionar tus anuncios. El token se guardará automáticamente.</p>
-            <div class="modal-divider"><span>o configurá manualmente</span></div>
-          </div>
-
-          <div class="field-group">
-            <label for="metaAppIdInput">App ID</label>
-            <input type="text" id="metaAppIdInput" placeholder="1316761413613894" autocomplete="off" />
-          </div>
-          <div class="field-group">
-            <label for="metaAppSecretInput">App Secret</label>
-            <input type="password" id="metaAppSecretInput" placeholder="e4517965eeda..." autocomplete="new-password" />
-          </div>
-          <div class="field-group">
-            <label for="metaTokenInput">Access Token</label>
-            <textarea id="metaTokenInput" rows="4" placeholder="EAABwzLixnjYBO..."></textarea>
-          </div>
-          <button class="btn-primary" id="saveCredsBtn">Guardar credenciales</button>
+          <p class="modal-hint" style="margin-top:0.75rem">Para conectar tu cuenta de Meta Ads, pedile al administrador un link de conexión. Una vez que hayas conectado tu cuenta en Windsor, el administrador deberá asignártela desde el panel de Admin.</p>
           <div class="modal-feedback hidden" id="tokenFeedback"></div>
         </div>
       </div>
@@ -305,14 +269,18 @@
       <!-- Admin pane -->
       <div class="modal-pane hidden" id="pane-admin">
         <div class="modal-section">
-          <h4>Users</h4>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
+            <h4>Users</h4>
+            <button class="btn-small btn-generate-link" id="generateLinkBtn">🔗 Generar link de conexión</button>
+          </div>
+          <div class="modal-feedback hidden" id="generateLinkFeedback"></div>
           <table class="admin-user-table" id="adminUserTable">
             <thead>
               <tr>
                 <th>Usuario</th>
                 <th>Email</th>
                 <th>Rol</th>
-                <th>Credenciales Meta</th>
+                <th>Windsor</th>
                 <th>Acciones</th>
               </tr>
             </thead>

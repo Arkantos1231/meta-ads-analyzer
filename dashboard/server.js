@@ -5,12 +5,12 @@
  * Uses only Node.js 18+ built-ins + better-sqlite3 + bcryptjs.
  * Reads credentials from .env.meta-ads.
  * Serves dashboard/public/ as static files on port 3000.
+ * Data source: windsor.ai (instead of Meta Graph API directly).
  */
 
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import {
@@ -21,15 +21,11 @@ import {
   createUser,
   deleteUser,
   updateUserPassword,
-  updateUserMetaToken,
-  updateUserMetaAppId,
-  updateUserMetaAppSecret,
-  clearUserMetaField,
+  updateUserWindsorDatasource,
+  clearUserWindsorDatasource,
   deleteAllUserSessions,
   createSession,
   deleteSession,
-  encrypt,
-  decrypt,
 } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,7 +37,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENV_FILE = path.resolve(__dirname, '.env.meta-ads');
 
 if (fs.existsSync(ENV_FILE)) {
-  // Local dev: load file and set any missing env vars from it
   const lines = fs.readFileSync(ENV_FILE, 'utf8').split('\n');
   for (const line of lines) {
     const trimmed = line.trim();
@@ -51,7 +46,6 @@ if (fs.existsSync(ENV_FILE)) {
     let key = trimmed.slice(0, idx).trim();
     if (key.startsWith('export ')) key = key.slice(7).trim();
     const val = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
-    // Don't overwrite vars already set in the environment
     if (!process.env[key]) process.env[key] = val;
   }
   console.log('📄  Loaded .env.meta-ads');
@@ -67,20 +61,14 @@ if (!process.env.ENCRYPTION_KEY) {
   process.exit(1);
 }
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || null;
-if (!OPENAI_API_KEY) console.warn('⚠️  OPENAI_API_KEY missing — AI recommendations disabled');
+const OPENAI_API_KEY  = process.env.OPENAI_API_KEY  || null;
+const WINDSOR_API_KEY = process.env.WINDSOR_API_KEY || null;
 
-const META_APP_ID     = process.env.META_APP_ID     || null;
-const META_APP_SECRET = process.env.META_APP_SECRET || null;
-const APP_URL         = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+if (!OPENAI_API_KEY)  console.warn('⚠️  OPENAI_API_KEY missing — AI recommendations disabled');
+if (!WINDSOR_API_KEY) console.warn('⚠️  WINDSOR_API_KEY missing — data API disabled');
+else                   console.log('✅  Windsor.ai enabled');
 
-if (META_APP_ID && META_APP_SECRET) {
-  console.log('✅  Facebook OAuth enabled');
-} else {
-  console.log('ℹ️   META_APP_ID / META_APP_SECRET not set — Facebook OAuth disabled (manual token only)');
-}
-
-const GRAPH_BASE = 'https://graph.facebook.com/v21.0';
+const WINDSOR_BASE = 'https://connectors.windsor.ai/facebook';
 
 // ---------------------------------------------------------------------------
 // Auth middleware
@@ -94,16 +82,9 @@ function requireAuth(req) {
   const user = getUserById(session.user_id);
   if (!user) throw Object.assign(new Error('Unauthorized'), { status: 401 });
 
-  const metaToken    = user.meta_token_enc      ? decrypt(user.meta_token_enc,      user.meta_token_iv,      user.meta_token_tag)      : null;
-  const metaAppId    = user.meta_app_id_enc     ? decrypt(user.meta_app_id_enc,     user.meta_app_id_iv,     user.meta_app_id_tag)     : null;
-  const metaAppSecret= user.meta_app_secret_enc ? decrypt(user.meta_app_secret_enc, user.meta_app_secret_iv, user.meta_app_secret_tag) : null;
-
   return {
     id: user.id, username: user.username, email: user.email, role: user.role,
-    metaToken, metaAppId, metaAppSecret,
-    meta_token_enc: user.meta_token_enc,
-    meta_app_id_enc: user.meta_app_id_enc,
-    meta_app_secret_enc: user.meta_app_secret_enc,
+    windsorDatasourceId: user.windsor_datasource_id || null,
   };
 }
 
@@ -111,6 +92,11 @@ function requireAdmin(req) {
   const user = requireAuth(req);
   if (user.role !== 'admin') throw Object.assign(new Error('Forbidden'), { status: 403 });
   return user;
+}
+
+function requireWindsorDatasource(user) {
+  if (!WINDSOR_API_KEY) throw Object.assign(new Error('WINDSOR_API_KEY not configured on server'), { status: 500 });
+  if (!user.windsorDatasourceId) throw Object.assign(new Error('No Windsor account configured — ask your admin to assign your account'), { status: 400 });
 }
 
 function sessionCookie(token) {
@@ -122,25 +108,71 @@ function clearSessionCookie() {
 }
 
 // ---------------------------------------------------------------------------
-// Meta API helper
+// Windsor API helper
 // ---------------------------------------------------------------------------
-async function metaGet(path, params = {}, accessToken, appSecret = null) {
-  const extra = {};
-  if (appSecret) {
-    // appsecret_proof adds server-side validation — Meta recommends it for server calls
-    extra.appsecret_proof = crypto.createHmac('sha256', appSecret).update(accessToken).digest('hex');
-  }
-  const qs = new URLSearchParams({ access_token: accessToken, ...extra, ...params });
-  const url = `${GRAPH_BASE}${path}?${qs}`;
-  const res = await fetch(url);
+async function windsorGet(datasourceId, fields, params = {}) {
+  const qs = new URLSearchParams({
+    api_key:    WINDSOR_API_KEY,
+    datasource: datasourceId,
+    fields:     fields.join(','),
+    ...params,
+  });
+  const res  = await fetch(`${WINDSOR_BASE}?${qs}`);
   const json = await res.json();
-  if (json.error) {
-    const err = new Error(json.error.message);
-    err.status = res.status;
-    err.meta = json.error;
-    throw err;
+  if (json.error) throw Object.assign(new Error(json.error), { status: 400 });
+  return json.data || [];
+}
+
+function datePresetToParams(preset) {
+  if (!preset || preset === 'maximum') {
+    const today = new Date().toISOString().slice(0, 10);
+    return { date_from: '2015-01-01', date_to: today };
   }
-  return json;
+  return { date_preset: preset };
+}
+
+// Transform flat Windsor rows → Meta-format aggregated by key field
+function aggregateRows(rows, keyField, extraFields) {
+  const map = {};
+  for (const row of rows) {
+    const key = row[keyField];
+    if (!key) continue;
+    if (!map[key]) {
+      map[key] = { ...extraFields(row), spend: 0, impressions: 0, clicks: 0, reach: 0, purchases: 0, purchase_value: 0, roas_numer: 0, roas_denom: 0 };
+    }
+    const m     = map[key];
+    const spend = parseFloat(row.spend) || 0;
+    m.spend          += spend;
+    m.impressions    += parseInt(row.impressions)    || 0;
+    m.clicks         += parseInt(row.clicks)         || 0;
+    m.reach          += parseInt(row.reach)          || 0;
+    m.purchases      += parseFloat(row.purchases)    || 0;
+    m.purchase_value += parseFloat(row.purchase_value) || 0;
+    const roas = parseFloat(row.purchase_roas) || parseFloat(row.roas) || 0;
+    if (roas > 0) { m.roas_numer += roas * spend; m.roas_denom += spend; }
+  }
+  return Object.values(map);
+}
+
+function metaMetrics(m) {
+  const imp  = m.impressions;
+  const clk  = m.clicks;
+  const cpm  = imp  > 0 ? (m.spend / imp)  * 1000 : 0;
+  const cpc  = clk  > 0 ?  m.spend / clk          : 0;
+  const ctr  = imp  > 0 ? (clk     / imp)  * 100   : 0;
+  const roas = m.roas_denom > 0 ? m.roas_numer / m.roas_denom : null;
+  return {
+    spend:        m.spend.toFixed(2),
+    impressions:  m.impressions.toString(),
+    clicks:       m.clicks.toString(),
+    reach:        m.reach.toString(),
+    cpm:          cpm.toFixed(2),
+    cpc:          cpc.toFixed(2),
+    ctr:          ctr.toFixed(4),
+    actions:      m.purchases > 0      ? [{ action_type: 'purchase', value: m.purchases.toFixed(0) }]      : [],
+    action_values: m.purchase_value > 0 ? [{ action_type: 'purchase', value: m.purchase_value.toFixed(2) }] : [],
+    purchase_roas: roas !== null        ? [{ value: roas.toFixed(4) }]                                       : [],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -189,17 +221,13 @@ async function getAiRecommendations(payload) {
   const adsTable = topAds.length > 0
     ? '| Ad | Spend | ROAS | CTR | CPM | Purchases |\n' +
       topAds.map(ad => {
-        const adRoas = Array.isArray(ad.purchase_roas) && ad.purchase_roas[0]
-          ? parseFloat(ad.purchase_roas[0].value).toFixed(2) + 'x' : 'N/A';
+        const adRoas  = Array.isArray(ad.purchase_roas) && ad.purchase_roas[0] ? parseFloat(ad.purchase_roas[0].value).toFixed(2) + 'x' : 'N/A';
         const adPurch = (Array.isArray(ad.actions) ? ad.actions.find(a => a.action_type === 'purchase') : null)?.value || '0';
         return `| ${ad.ad_name || 'Unknown'} | $${parseFloat(ad.spend || 0).toFixed(2)} | ${adRoas} | ${parseFloat(ad.ctr || 0).toFixed(2)}% | $${parseFloat(ad.cpm || 0).toFixed(2)} | ${adPurch} |`;
       }).join('\n')
     : 'No ad-level data available';
 
-  const adsetsText = (adsets || []).map(as => {
-    const stage = as.learning_stage_info?.status || 'N/A';
-    return `${as.name}: ${stage} — ${as.effective_status || as.status || 'N/A'}`;
-  }).join('\n') || 'No ad set data';
+  const adsetsText = (adsets || []).map(as => `${as.name}: ${as.effective_status || as.status || 'N/A'}`).join('\n') || 'No ad set data';
 
   const userMessage =
 `Campaign: ${campaignName} | Objective: ${campaignObjective || 'N/A'} | Status: ${campaignStatus || 'N/A'}
@@ -211,7 +239,7 @@ CTR: ${ctr}% | CPM: $${cpm} | CPC: $${cpc} | Impressions: ${impressions} | Reach
 TOP ADS (by spend):
 ${adsTable}
 
-AD SETS — LEARNING STATUS:
+AD SETS:
 ${adsetsText}
 
 Provide 3–5 specific recommendations.`;
@@ -280,11 +308,7 @@ async function getAiReport(payload) {
     : 'No ad-level data available';
 
   const adsetsTable = (adsets || []).length > 0
-    ? (adsets || []).map(as => {
-        const stage = as.learning_stage_info?.status || 'N/A';
-        const days  = as.learning_stage_info?.attribution_window_size_unit || '';
-        return `- ${as.name} | Status: ${as.effective_status || as.status || 'N/A'} | Learning: ${stage}${days ? ' (' + days + ')' : ''}`;
-      }).join('\n')
+    ? (adsets || []).map(as => `- ${as.name} | Status: ${as.effective_status || as.status || 'N/A'}`).join('\n')
     : 'No ad set data';
 
   const userMessage =
@@ -317,12 +341,12 @@ ${adsetsTable}`;
 ### Reach & Impressions
 ### Purchases & Revenue
 ## Ad Creative Performance
-## Ad Set Learning Phase
+## Ad Set Status
 ## Strategic Action Plan
 
 For each metric section: (1) state the current value, (2) compare to typical Meta Ads benchmarks, (3) diagnose what it means for this campaign, (4) give 1–2 specific, actionable improvement steps.
-In "Ad Creative Performance": identify top performers and underperformers from the ad data, explain why each is working or not.
-In "Ad Set Learning Phase": assess each ad set's learning status and what actions to take.
+In "Ad Creative Performance": identify top performers and underperformers from the ad data.
+In "Ad Set Status": review each ad set's status and recommend actions.
 In "Strategic Action Plan": write 5–7 prioritized, numbered action items with clear expected impact.
 Use the exact numbers from the data. Be direct and specific.`;
 
@@ -353,124 +377,143 @@ Use the exact numbers from the data. Be direct and specific.`;
 }
 
 // ---------------------------------------------------------------------------
-// Route handlers (all receive user object with metaToken)
+// Windsor-backed API routes
 // ---------------------------------------------------------------------------
-function requireMetaToken(user) {
-  if (!user.metaToken) throw Object.assign(new Error('Meta Access Token no configurado — ve a Configuración → Credenciales Meta'), { status: 400 });
-}
-
 const routes = {
   '/api/accounts': async (_query, user) => {
-    requireMetaToken(user);
-    return metaGet('/me/adaccounts', {
-      fields: 'name,account_id,account_status,currency',
-      limit: 100,
-    }, user.metaToken, user.metaAppSecret);
+    requireWindsorDatasource(user);
+    const today = new Date().toISOString().slice(0, 10);
+    const rows  = await windsorGet(user.windsorDatasourceId,
+      ['account_id', 'account_name'],
+      { date_from: '2024-01-01', date_to: today }
+    );
+    const seen = new Set();
+    const accounts = [];
+    for (const row of rows) {
+      if (row.account_id && !seen.has(row.account_id)) {
+        seen.add(row.account_id);
+        accounts.push({ account_id: row.account_id, name: row.account_name || row.account_id, account_status: 1 });
+      }
+    }
+    return { data: accounts };
   },
 
   '/api/campaigns': async (query, user) => {
-    requireMetaToken(user);
-    const { account_id } = query;
-    if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
-    return metaGet(`/act_${account_id}/campaigns`, {
-      fields: 'id,name,status,objective,daily_budget,lifetime_budget,effective_status',
-      limit: 100,
-    }, user.metaToken, user.metaAppSecret);
+    requireWindsorDatasource(user);
+    const { date_preset = 'last_30d' } = query;
+    const rows = await windsorGet(user.windsorDatasourceId,
+      ['campaign_id', 'campaign_name', 'campaign_status', 'objective'],
+      datePresetToParams(date_preset)
+    );
+    const seen = new Set();
+    const campaigns = [];
+    for (const row of rows) {
+      if (row.campaign_id && !seen.has(row.campaign_id)) {
+        seen.add(row.campaign_id);
+        campaigns.push({
+          id:               row.campaign_id,
+          name:             row.campaign_name || row.campaign_id,
+          status:           (row.campaign_status || 'UNKNOWN').toUpperCase(),
+          effective_status: (row.campaign_status || 'UNKNOWN').toUpperCase(),
+          objective:        row.objective || '',
+        });
+      }
+    }
+    return { data: campaigns };
   },
 
   '/api/insights': async (query, user) => {
-    requireMetaToken(user);
-    const { account_id, date_preset = 'last_30d' } = query;
-    if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
-    return metaGet(`/act_${account_id}/insights`, {
-      level: 'campaign',
-      date_preset,
-      fields: [
-        'campaign_name',
-        'spend',
-        'impressions',
-        'clicks',
-        'cpm',
-        'cpc',
-        'ctr',
-        'purchase_roas',
-        'actions',
-        'action_values',
-        'reach',
-        'frequency',
-      ].join(','),
-      limit: 100,
-    }, user.metaToken, user.metaAppSecret);
-  },
-
-  '/api/adsets': async (query, user) => {
-    requireMetaToken(user);
-    const { account_id } = query;
-    if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
-    return metaGet(`/act_${account_id}/adsets`, {
-      fields: 'name,status,effective_status,learning_stage_info,campaign_id,daily_budget,bid_strategy',
-      limit: 200,
-    }, user.metaToken, user.metaAppSecret);
-  },
-
-  '/api/ad-creatives': async (query, user) => {
-    requireMetaToken(user);
-    const { account_id } = query;
-    if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
-    return metaGet(`/act_${account_id}/ads`, {
-      fields: 'id,name,creative{id,thumbnail_url,image_url}',
-      limit: 500,
-    }, user.metaToken, user.metaAppSecret);
+    requireWindsorDatasource(user);
+    const { date_preset = 'last_30d' } = query;
+    const rows = await windsorGet(user.windsorDatasourceId,
+      ['campaign_name', 'campaign_id', 'spend', 'impressions', 'clicks', 'reach', 'purchases', 'purchase_value', 'purchase_roas'],
+      datePresetToParams(date_preset)
+    );
+    const aggregated = aggregateRows(rows, 'campaign_name', r => ({ campaign_name: r.campaign_name, campaign_id: r.campaign_id }));
+    const result = aggregated.map(m => ({ campaign_name: m.campaign_name, ...metaMetrics(m) }));
+    return { data: result };
   },
 
   '/api/ads': async (query, user) => {
-    requireMetaToken(user);
-    const { account_id, date_preset = 'last_30d' } = query;
-    if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
-    return metaGet(`/act_${account_id}/insights`, {
-      level: 'ad',
-      date_preset,
-      fields: [
-        'ad_id',
-        'ad_name',
-        'adset_name',
-        'campaign_name',
-        'spend',
-        'impressions',
-        'clicks',
-        'cpm',
-        'cpc',
-        'ctr',
-        'purchase_roas',
-        'actions',
-        'action_values',
-        'reach',
-        'frequency',
-      ].join(','),
-      limit: 500,
-    }, user.metaToken, user.metaAppSecret);
+    requireWindsorDatasource(user);
+    const { date_preset = 'last_30d' } = query;
+    const rows = await windsorGet(user.windsorDatasourceId,
+      ['ad_id', 'ad_name', 'adset_name', 'campaign_name', 'spend', 'impressions', 'clicks', 'reach', 'purchases', 'purchase_value', 'purchase_roas'],
+      datePresetToParams(date_preset)
+    );
+    const aggregated = aggregateRows(rows, 'ad_id', r => ({ ad_id: r.ad_id, ad_name: r.ad_name, adset_name: r.adset_name, campaign_name: r.campaign_name }));
+    const result = aggregated.map(m => ({ ad_id: m.ad_id, ad_name: m.ad_name, adset_name: m.adset_name, campaign_name: m.campaign_name, ...metaMetrics(m) }));
+    return { data: result };
+  },
+
+  '/api/adsets': async (query, user) => {
+    requireWindsorDatasource(user);
+    const { date_preset = 'last_30d' } = query;
+    const rows = await windsorGet(user.windsorDatasourceId,
+      ['adset_id', 'adset_name', 'campaign_id', 'adset_status'],
+      datePresetToParams(date_preset)
+    );
+    const seen = new Set();
+    const adsets = [];
+    for (const row of rows) {
+      if (row.adset_id && !seen.has(row.adset_id)) {
+        seen.add(row.adset_id);
+        adsets.push({
+          id:               row.adset_id,
+          name:             row.adset_name || row.adset_id,
+          campaign_id:      row.campaign_id,
+          status:           (row.adset_status || 'UNKNOWN').toUpperCase(),
+          effective_status: (row.adset_status || 'UNKNOWN').toUpperCase(),
+        });
+      }
+    }
+    return { data: adsets };
   },
 
   '/api/placements': async (query, user) => {
-    requireMetaToken(user);
-    const { account_id, date_preset = 'last_30d' } = query;
-    if (!account_id) throw Object.assign(new Error('account_id required'), { status: 400 });
-    return metaGet(`/act_${account_id}/insights`, {
-      level: 'adset',
-      date_preset,
-      breakdowns: 'publisher_platform,placement',
-      fields: [
-        'spend',
-        'impressions',
-        'clicks',
-        'cpm',
-        'cpc',
-        'purchase_roas',
-        'actions',
-      ].join(','),
-      limit: 200,
-    }, user.metaToken, user.metaAppSecret);
+    requireWindsorDatasource(user);
+    const { date_preset = 'last_30d' } = query;
+    const rows = await windsorGet(user.windsorDatasourceId,
+      ['publisher_platform', 'placement', 'spend', 'impressions', 'clicks', 'purchases', 'purchase_roas'],
+      datePresetToParams(date_preset)
+    );
+    const map = {};
+    for (const row of rows) {
+      const key = `${row.publisher_platform}||${row.placement}`;
+      if (!map[key]) {
+        map[key] = { publisher_platform: row.publisher_platform, placement: row.placement, spend: 0, impressions: 0, clicks: 0, purchases: 0, roas_numer: 0, roas_denom: 0 };
+      }
+      const p     = map[key];
+      const spend = parseFloat(row.spend) || 0;
+      p.spend       += spend;
+      p.impressions += parseInt(row.impressions) || 0;
+      p.clicks      += parseInt(row.clicks)      || 0;
+      p.purchases   += parseFloat(row.purchases) || 0;
+      const roas = parseFloat(row.purchase_roas) || 0;
+      if (roas > 0) { p.roas_numer += roas * spend; p.roas_denom += spend; }
+    }
+    const result = Object.values(map).map(p => {
+      const imp  = p.impressions;
+      const clk  = p.clicks;
+      const cpm  = imp > 0 ? (p.spend / imp) * 1000 : 0;
+      const cpc  = clk > 0 ?  p.spend / clk         : 0;
+      const roas = p.roas_denom > 0 ? p.roas_numer / p.roas_denom : null;
+      return {
+        publisher_platform: p.publisher_platform,
+        placement:          p.placement,
+        spend:              p.spend.toFixed(2),
+        impressions:        p.impressions.toString(),
+        clicks:             p.clicks.toString(),
+        cpm:                cpm.toFixed(2),
+        cpc:                cpc.toFixed(2),
+        actions:       p.purchases > 0 ? [{ action_type: 'purchase', value: p.purchases.toFixed(0) }] : [],
+        purchase_roas: roas !== null    ? [{ value: roas.toFixed(4) }]                                 : [],
+      };
+    });
+    return { data: result };
   },
+
+  '/api/ad-creatives': async () => ({ data: [] }),
 };
 
 // ---------------------------------------------------------------------------
@@ -491,7 +534,6 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 function serveStatic(req, res) {
   let urlPath = new URL(req.url, 'http://x').pathname;
 
-  // Protect the root/index — redirect unauthenticated users to login
   if (urlPath === '/' || urlPath === '/index.html') {
     try {
       requireAuth(req);
@@ -505,7 +547,6 @@ function serveStatic(req, res) {
 
   const filePath = path.join(PUBLIC_DIR, urlPath);
 
-  // Prevent path traversal
   if (!filePath.startsWith(PUBLIC_DIR)) {
     res.writeHead(403);
     res.end('Forbidden');
@@ -581,109 +622,14 @@ const server = http.createServer(async (req, res) => {
     try {
       const user = requireAuth(req);
       sendJson(res, 200, {
-        username:      user.username,
-        email:         user.email,
-        role:          user.role,
-        hasToken:      !!user.meta_token_enc,
-        hasAppId:      !!user.meta_app_id_enc,
-        hasAppSecret:  !!user.meta_app_secret_enc,
-        oauthAvailable: !!(META_APP_ID && META_APP_SECRET),
+        username:             user.username,
+        email:                user.email,
+        role:                 user.role,
+        hasWindsorDatasource: !!user.windsorDatasourceId,
+        windsorDatasourceId:  user.windsorDatasourceId,
       });
     } catch (err) {
       sendJson(res, err.status || 401, { error: err.message });
-    }
-    return;
-  }
-
-  // ------------------------------------------------------------------
-  // Facebook OAuth endpoints
-  // ------------------------------------------------------------------
-
-  // GET /auth/facebook — start OAuth flow
-  if (method === 'GET' && pathname === '/auth/facebook') {
-    if (!META_APP_ID || !META_APP_SECRET) {
-      res.writeHead(302, { Location: '/?error=OAuth+not+configured' });
-      res.end();
-      return;
-    }
-    try {
-      requireAuth(req);
-    } catch {
-      res.writeHead(302, { Location: '/login.html' });
-      res.end();
-      return;
-    }
-    const state  = crypto.randomBytes(16).toString('hex');
-    const params = new URLSearchParams({
-      client_id:     META_APP_ID,
-      redirect_uri:  `${APP_URL}/auth/facebook/callback`,
-      scope:         'ads_read,ads_management,business_management',
-      state,
-      response_type: 'code',
-    });
-    res.writeHead(302, {
-      Location:   `https://www.facebook.com/v21.0/dialog/oauth?${params}`,
-      'Set-Cookie': `oauth_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600`,
-    });
-    res.end();
-    return;
-  }
-
-  // GET /auth/facebook/callback — Facebook redirects here with ?code=
-  if (method === 'GET' && pathname === '/auth/facebook/callback') {
-    const p           = Object.fromEntries(parsedUrl.searchParams.entries());
-    const cookieHdr   = req.headers.cookie || '';
-    const stateMatch  = cookieHdr.match(/(?:^|;\s*)oauth_state=([^;]+)/);
-    const clearState  = 'oauth_state=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0';
-
-    // Validate CSRF state
-    if (!stateMatch || stateMatch[1] !== p.state) {
-      res.writeHead(302, { Location: '/?error=invalid_oauth_state', 'Set-Cookie': clearState });
-      res.end();
-      return;
-    }
-
-    if (p.error) {
-      res.writeHead(302, { Location: `/?error=${encodeURIComponent(p.error_description || p.error)}`, 'Set-Cookie': clearState });
-      res.end();
-      return;
-    }
-
-    try {
-      const user = requireAuth(req);
-
-      // Exchange code → short-lived token
-      const tokenRes  = await fetch(`${GRAPH_BASE}/oauth/access_token?${new URLSearchParams({
-        client_id:    META_APP_ID,
-        client_secret: META_APP_SECRET,
-        redirect_uri: `${APP_URL}/auth/facebook/callback`,
-        code:          p.code,
-      })}`);
-      const tokenJson = await tokenRes.json();
-      if (tokenJson.error) throw new Error(tokenJson.error.message);
-
-      // Exchange short-lived → long-lived token (~60 days)
-      const longRes  = await fetch(`${GRAPH_BASE}/oauth/access_token?${new URLSearchParams({
-        grant_type:        'fb_exchange_token',
-        client_id:         META_APP_ID,
-        client_secret:     META_APP_SECRET,
-        fb_exchange_token: tokenJson.access_token,
-      })}`);
-      const longJson = await longRes.json();
-      if (longJson.error) throw new Error(longJson.error.message);
-
-      // Store token encrypted per-user
-      const { enc, iv, tag } = encrypt(longJson.access_token);
-      updateUserMetaToken(user.id, enc, iv, tag);
-
-      res.writeHead(302, {
-        Location:    '/?connected=facebook',
-        'Set-Cookie': clearState,
-      });
-      res.end();
-    } catch (err) {
-      res.writeHead(302, { Location: `/?error=${encodeURIComponent(err.message)}`, 'Set-Cookie': clearState });
-      res.end();
     }
     return;
   }
@@ -691,60 +637,6 @@ const server = http.createServer(async (req, res) => {
   // ------------------------------------------------------------------
   // Settings endpoints
   // ------------------------------------------------------------------
-
-  // PUT /settings/meta-credentials  { token?, appId?, appSecret? }
-  // Each field is independent: non-empty string = save; empty string = clear; absent = leave unchanged
-  if (method === 'PUT' && pathname === '/settings/meta-credentials') {
-    try {
-      const user = requireAuth(req);
-      const body = await readBody(req);
-      const { token, appId, appSecret } = JSON.parse(body);
-
-      if (token !== undefined) {
-        if (token.trim()) {
-          const r = encrypt(token.trim());
-          updateUserMetaToken(user.id, r.enc, r.iv, r.tag);
-        } else {
-          clearUserMetaField(user.id, 'meta_token');
-        }
-      }
-      if (appId !== undefined) {
-        if (appId.trim()) {
-          const r = encrypt(appId.trim());
-          updateUserMetaAppId(user.id, r.enc, r.iv, r.tag);
-        } else {
-          clearUserMetaField(user.id, 'meta_app_id');
-        }
-      }
-      if (appSecret !== undefined) {
-        if (appSecret.trim()) {
-          const r = encrypt(appSecret.trim());
-          updateUserMetaAppSecret(user.id, r.enc, r.iv, r.tag);
-        } else {
-          clearUserMetaField(user.id, 'meta_app_secret');
-        }
-      }
-      sendJson(res, 200, { ok: true });
-    } catch (err) {
-      sendJson(res, err.status || 500, { error: err.message });
-    }
-    return;
-  }
-
-  // GET /settings/meta-credentials-status
-  if (method === 'GET' && pathname === '/settings/meta-credentials-status') {
-    try {
-      const user = requireAuth(req);
-      sendJson(res, 200, {
-        hasToken:     !!user.meta_token_enc,
-        hasAppId:     !!user.meta_app_id_enc,
-        hasAppSecret: !!user.meta_app_secret_enc,
-      });
-    } catch (err) {
-      sendJson(res, err.status || 401, { error: err.message });
-    }
-    return;
-  }
 
   // PUT /settings/password
   if (method === 'PUT' && pathname === '/settings/password') {
@@ -840,6 +732,82 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // PUT /admin/users/:id/windsor-datasource
+  const windsorDsMatch = pathname.match(/^\/admin\/users\/(\d+)\/windsor-datasource$/);
+  if (method === 'PUT' && windsorDsMatch) {
+    try {
+      requireAdmin(req);
+      const targetId = parseInt(windsorDsMatch[1], 10);
+      const body = await readBody(req);
+      const { datasourceId } = JSON.parse(body);
+      if (datasourceId) {
+        updateUserWindsorDatasource(targetId, datasourceId);
+      } else {
+        clearUserWindsorDatasource(targetId);
+      }
+      sendJson(res, 200, { ok: true });
+    } catch (err) {
+      sendJson(res, err.status || 500, { error: err.message });
+    }
+    return;
+  }
+
+  // ------------------------------------------------------------------
+  // Windsor admin endpoints
+  // ------------------------------------------------------------------
+
+  // GET /api/windsor/datasources — list all datasources connected to the Windsor account
+  if (method === 'GET' && pathname === '/api/windsor/datasources') {
+    try {
+      requireAdmin(req);
+      if (!WINDSOR_API_KEY) return sendJson(res, 400, { error: 'WINDSOR_API_KEY not configured' });
+
+      const today = new Date().toISOString().slice(0, 10);
+      const qs    = new URLSearchParams({
+        api_key:   WINDSOR_API_KEY,
+        fields:    'datasource,account_name',
+        date_from: '2024-01-01',
+        date_to:   today,
+      });
+      const resp = await fetch(`${WINDSOR_BASE}?${qs}`);
+      const json = await resp.json();
+      if (json.error) return sendJson(res, 400, { error: json.error });
+
+      const seen        = new Set();
+      const datasources = [];
+      for (const row of (json.data || [])) {
+        if (row.datasource && !seen.has(row.datasource)) {
+          seen.add(row.datasource);
+          datasources.push({ id: row.datasource, account_name: row.account_name || row.datasource });
+        }
+      }
+      sendJson(res, 200, { datasources });
+    } catch (err) {
+      sendJson(res, err.status || 500, { error: err.message });
+    }
+    return;
+  }
+
+  // POST /api/windsor/generate-link — generate a co-user connection URL
+  if (method === 'POST' && pathname === '/api/windsor/generate-link') {
+    try {
+      requireAdmin(req);
+      if (!WINDSOR_API_KEY) return sendJson(res, 400, { error: 'WINDSOR_API_KEY not configured' });
+
+      const url  = `https://onboard.windsor.ai/api/team/generate-co-user-url/?allowed_sources=facebook&api_key=${encodeURIComponent(WINDSOR_API_KEY)}`;
+      const resp = await fetch(url);
+      const json = await resp.json();
+      if (json.error) return sendJson(res, 400, { error: json.error });
+
+      const connectionUrl = json.url || json.connection_url || (typeof json === 'string' ? json : null);
+      if (!connectionUrl) return sendJson(res, 500, { error: 'Unexpected response from Windsor', raw: json });
+      sendJson(res, 200, { url: connectionUrl });
+    } catch (err) {
+      sendJson(res, err.status || 500, { error: err.message });
+    }
+    return;
+  }
+
   // ------------------------------------------------------------------
   // POST: AI endpoints (auth required)
   // ------------------------------------------------------------------
@@ -870,7 +838,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ------------------------------------------------------------------
-  // Meta API routes (auth required, per-user token)
+  // Windsor API routes (auth required, per-user datasource)
   // ------------------------------------------------------------------
   if (pathname.startsWith('/api/')) {
     let user;
@@ -892,7 +860,7 @@ const server = http.createServer(async (req, res) => {
       const data = await handler(query, user);
       sendJson(res, 200, data);
     } catch (err) {
-      sendJson(res, err.status || 500, { error: err.message, detail: err.meta });
+      sendJson(res, err.status || 500, { error: err.message });
     }
     return;
   }

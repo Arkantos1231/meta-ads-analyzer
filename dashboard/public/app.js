@@ -77,7 +77,6 @@ themeBtn.addEventListener('click', () => {
 // ---------------------------------------------------------------------------
 let allAdRows      = [];
 let allAdsetRows   = [];
-let allCreativeMap = {};
 let allInsightRows  = {};   // keyed by campaign_name
 let allCampaignRows = [];   // full campaign objects (for objective/status)
 let selectedCampaign = null;  // campaign name currently selected
@@ -292,7 +291,7 @@ function onCampaignClick(campaignName, campaignId) {
     campaignBody.querySelectorAll('.campaign-row').forEach(r => r.classList.remove('row-selected'));
     setFilterTag(adFilterTag, null);
     setFilterTag(adsetFilterTag, null);
-    renderAds(allAdRows, allCreativeMap);
+    renderAds(allAdRows);
     renderAdsets(allAdsetRows);
     aiBody.innerHTML = '<p class="ai-placeholder">Select a campaign, then click a button above.</p>';
     aiCampaignLabel.textContent = '';
@@ -308,7 +307,7 @@ function onCampaignClick(campaignName, campaignId) {
     setFilterTag(adsetFilterTag, label);
     const filteredAds    = allAdRows.filter(r => r.campaign_name === campaignName);
     const filteredAdsets = allAdsetRows.filter(r => r.campaign_id === campaignId);
-    renderAds(filteredAds, allCreativeMap);
+    renderAds(filteredAds);
     renderAdsets(filteredAdsets);
     aiCampaignLabel.textContent = truncate(campaignName, 50);
     aiBody.innerHTML = '<p class="ai-placeholder">Campaign selected — use a button above to generate AI analysis.</p>';
@@ -559,18 +558,9 @@ function setFilterTag(el, label) {
 // ---------------------------------------------------------------------------
 // Render: Ads Table
 // ---------------------------------------------------------------------------
-function buildCreativeMap(creativeRows) {
-  const map = {};
-  for (const ad of creativeRows) {
-    const thumb = ad.creative?.thumbnail_url || ad.creative?.image_url || null;
-    if (thumb) map[ad.id] = thumb;
-  }
-  return map;
-}
-
-function renderAds(adRows, creativeMap = {}) {
+function renderAds(adRows) {
   if (!adRows || adRows.length === 0) {
-    adBody.innerHTML = `<tr><td colspan="14" class="empty-row">No ad data for selected period.</td></tr>`;
+    adBody.innerHTML = `<tr><td colspan="13" class="empty-row">No ad data for selected period.</td></tr>`;
     adCount.textContent = '0';
     return;
   }
@@ -578,16 +568,11 @@ function renderAds(adRows, creativeMap = {}) {
   const sorted = [...adRows].sort((a, b) => parseFloat(b.spend) - parseFloat(a.spend));
 
   adBody.innerHTML = sorted.map(row => {
-    const purchases  = getAction(row.actions, 'purchase');
-    const revenue    = getAction(row.action_values, 'purchase');
-    const roas       = extractRoas(row.purchase_roas);
-    const thumbUrl   = creativeMap[row.ad_id];
-    const thumbHtml  = thumbUrl
-      ? `<img class="ad-thumb" src="${thumbUrl}" alt="${row.ad_name}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'ad-thumb-placeholder',textContent:'🖼'}))">`
-      : `<div class="ad-thumb-placeholder">🖼</div>`;
+    const purchases = getAction(row.actions, 'purchase');
+    const revenue   = getAction(row.action_values, 'purchase');
+    const roas      = extractRoas(row.purchase_roas);
 
     return `<tr>
-      <td>${thumbHtml}</td>
       <td title="${row.ad_name}">${truncate(row.ad_name, 35)}</td>
       <td title="${row.adset_name}" style="color:var(--text-muted);font-size:0.78rem">${truncate(row.adset_name, 30)}</td>
       <td title="${row.campaign_name}" style="color:var(--text-muted);font-size:0.78rem">${truncate(row.campaign_name, 30)}</td>
@@ -608,36 +593,21 @@ function renderAds(adRows, creativeMap = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Render: Learning Phase
+// Render: Ad Sets
 // ---------------------------------------------------------------------------
 function renderAdsets(adsetRows) {
   if (!adsetRows || adsetRows.length === 0) {
-    adsetBody.innerHTML = `<tr><td colspan="4" class="empty-row">No ad sets found.</td></tr>`;
+    adsetBody.innerHTML = `<tr><td colspan="2" class="empty-row">No ad sets found.</td></tr>`;
     adsetCount.textContent = '0';
     return;
   }
 
-  const priority = ['LEARNING', 'LEARNING_LIMITED'];
-  const sorted = [...adsetRows].sort((a, b) => {
-    const aStage = a.learning_stage_info?.status || '';
-    const bStage = b.learning_stage_info?.status || '';
-    const ai = priority.indexOf(aStage);
-    const bi = priority.indexOf(bStage);
-    if (ai !== bi) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-    return (a.name || '').localeCompare(b.name || '');
-  });
+  const sorted = [...adsetRows].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-  adsetBody.innerHTML = sorted.map(row => {
-    const stageInfo  = row.learning_stage_info;
-    const stageLabel = stageInfo?.status?.replace(/_/g, ' ') || 'N/A';
-
-    return `<tr>
-      <td title="${row.name}">${truncate(row.name, 45)}</td>
-      <td>${statusBadge(row.effective_status || row.status)}</td>
-      <td>${learnBadge(stageInfo)}</td>
-      <td style="color:var(--text-muted);font-size:0.78rem">${stageLabel}</td>
-    </tr>`;
-  }).join('');
+  adsetBody.innerHTML = sorted.map(row => `<tr>
+    <td title="${row.name}">${truncate(row.name, 55)}</td>
+    <td>${statusBadge(row.effective_status || row.status)}</td>
+  </tr>`).join('');
 
   adsetCount.textContent = sorted.length;
 }
@@ -721,17 +691,14 @@ function formatPlacement(p) {
 async function loadAccounts() {
   accountSelect.innerHTML = '<option value="">Loading…</option>';
   try {
-    const data = await apiFetch('/api/accounts');
+    const data     = await apiFetch('/api/accounts');
     const accounts = data.data || [];
     if (accounts.length === 0) {
       accountSelect.innerHTML = '<option value="">No accounts found</option>';
       return;
     }
     accountSelect.innerHTML = '<option value="">— Select account —</option>' +
-      accounts.map(a => {
-        const statusLabel = a.account_status === 1 ? '' : ' (inactive)';
-        return `<option value="${a.account_id}">${a.name}${statusLabel} (${a.account_id})</option>`;
-      }).join('');
+      accounts.map(a => `<option value="${a.account_id}">${a.name} (${a.account_id})</option>`).join('');
   } catch (err) {
     accountSelect.innerHTML = '<option value="">Error loading accounts</option>';
     showError(err.message);
@@ -766,12 +733,11 @@ async function loadDashboard() {
 
   const qs = `account_id=${encodeURIComponent(accountId)}&date_preset=${encodeURIComponent(datePreset)}`;
 
-  const [insightsResult, campaignsResult, adsResult, adCreativesResult, adsetsResult, placementsResult] = await Promise.allSettled([
+  const [insightsResult, campaignsResult, adsResult, adsetsResult, placementsResult] = await Promise.allSettled([
     apiFetch(`/api/insights?${qs}`),
-    apiFetch(`/api/campaigns?account_id=${encodeURIComponent(accountId)}`),
+    apiFetch(`/api/campaigns?${qs}`),
     apiFetch(`/api/ads?${qs}`),
-    apiFetch(`/api/ad-creatives?account_id=${encodeURIComponent(accountId)}`),
-    apiFetch(`/api/adsets?account_id=${encodeURIComponent(accountId)}`),
+    apiFetch(`/api/adsets?${qs}`),
     apiFetch(`/api/placements?${qs}`),
   ]);
 
@@ -790,15 +756,12 @@ async function loadDashboard() {
     showError(campaignsResult.reason?.message || 'Failed to load campaigns');
   }
 
-  allCreativeMap = buildCreativeMap(
-    adCreativesResult.status === 'fulfilled' ? adCreativesResult.value.data || [] : []
-  );
   if (adsResult.status === 'fulfilled') {
     allAdRows = adsResult.value.data || [];
-    renderAds(allAdRows, allCreativeMap);
+    renderAds(allAdRows);
   } else {
     allAdRows = [];
-    adBody.innerHTML = `<tr><td colspan="14" class="empty-row">Failed to load ads: ${adsResult.reason?.message}</td></tr>`;
+    adBody.innerHTML = `<tr><td colspan="13" class="empty-row">Failed to load ads: ${adsResult.reason?.message}</td></tr>`;
   }
 
   if (adsetsResult.status === 'fulfilled') {
@@ -806,7 +769,7 @@ async function loadDashboard() {
     renderAdsets(allAdsetRows);
   } else {
     allAdsetRows = [];
-    adsetBody.innerHTML = `<tr><td colspan="4" class="empty-row">Failed to load ad sets: ${adsetsResult.reason?.message}</td></tr>`;
+    adsetBody.innerHTML = `<tr><td colspan="2" class="empty-row">Failed to load ad sets: ${adsetsResult.reason?.message}</td></tr>`;
   }
 
   if (placementsResult.status === 'fulfilled') {
@@ -833,12 +796,6 @@ function initSettingsModal(me) {
     document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('hidden'));
   }
 
-  // Show OAuth button if server has Meta App credentials configured
-  if (me.oauthAvailable) {
-    const oauthSection = document.getElementById('oauthSection');
-    if (oauthSection) oauthSection.classList.remove('hidden');
-  }
-
   // Tab switching
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
@@ -847,14 +804,14 @@ function initSettingsModal(me) {
       tab.classList.add('active');
       document.getElementById(`pane-${tab.dataset.tab}`).classList.remove('hidden');
       if (tab.dataset.tab === 'admin') loadAdminUsers();
-      if (tab.dataset.tab === 'token') refreshCredsStatus();
+      if (tab.dataset.tab === 'token') refreshWindsorStatus();
     });
   });
 
   // Open / close
   settingsBtn.addEventListener('click', () => {
     overlay.classList.remove('hidden');
-    refreshCredsStatus();
+    refreshWindsorStatus();
   });
   closeBtn.addEventListener('click',    () => overlay.classList.add('hidden'));
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.add('hidden'); });
@@ -886,81 +843,72 @@ function initSettingsModal(me) {
     }
   });
 
-  // ---- Meta Credentials ----
-  async function refreshCredsStatus() {
+  // ---- Conexión Windsor ----
+  async function refreshWindsorStatus() {
     try {
-      const data = await apiFetch('/settings/meta-credentials-status');
-      setCredStatus('statusAppId',     data.hasAppId);
-      setCredStatus('statusAppSecret', data.hasAppSecret);
-      setCredStatus('statusToken',     data.hasToken);
+      const data = await apiFetch('/auth/me');
+      const icon = document.getElementById('windsorStatusIcon');
+      const text = document.getElementById('windsorStatusText');
+      if (data.hasWindsorDatasource) {
+        icon.textContent = '✓';
+        icon.className   = 'token-status--ok';
+        text.textContent = `Cuenta conectada (${data.windsorDatasourceId})`;
+      } else {
+        icon.textContent = '✗';
+        icon.className   = 'token-status--missing';
+        text.textContent = 'Sin cuenta conectada';
+      }
     } catch { /* ignore */ }
   }
 
-  function setCredStatus(elId, ok) {
-    const el = document.getElementById(elId);
-    el.textContent = ok ? '✓' : '✗';
-    el.className   = ok ? 'token-status--ok' : 'token-status--missing';
+  // ---- Admin: Users ----
+  let windsorDatasources = [];
+
+  async function loadWindsorDatasources() {
+    try {
+      const { datasources } = await apiFetch('/api/windsor/datasources');
+      windsorDatasources = datasources || [];
+    } catch {
+      windsorDatasources = [];
+    }
   }
 
-  document.getElementById('saveCredsBtn').addEventListener('click', async () => {
-    const appId     = document.getElementById('metaAppIdInput').value.trim();
-    const appSecret = document.getElementById('metaAppSecretInput').value.trim();
-    const token     = document.getElementById('metaTokenInput').value.trim();
-    const feedback  = document.getElementById('tokenFeedback');
-
-    // At least one field must be provided
-    if (appId === '' && appSecret === '' && token === '') {
-      return showFeedback(feedback, 'error', 'Completa al menos un campo antes de guardar.');
-    }
-
-    try {
-      await apiFetch('/settings/meta-credentials', {
-        method:  'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        // Only send fields the user interacted with (all three in this case)
-        body: JSON.stringify({ appId, appSecret, token }),
-      });
-      showFeedback(feedback, 'success', 'Credenciales guardadas. Recarga las cuentas para usar el nuevo token.');
-      document.getElementById('metaAppIdInput').value     = '';
-      document.getElementById('metaAppSecretInput').value = '';
-      document.getElementById('metaTokenInput').value     = '';
-      refreshCredsStatus();
-    } catch (err) {
-      showFeedback(feedback, 'error', err.message);
-    }
-  });
-
-  // ---- Admin: Users ----
   async function loadAdminUsers() {
     const tbody    = document.getElementById('adminUserBody');
     const feedback = document.getElementById('adminFeedback');
     tbody.innerHTML = `<tr><td colspan="5" class="empty-row"><span class="spinner"></span> Loading…</td></tr>`;
     try {
+      await loadWindsorDatasources();
       const { users } = await apiFetch('/admin/users');
       if (users.length === 0) {
         tbody.innerHTML = `<tr><td colspan="5" class="empty-row">No users found.</td></tr>`;
         return;
       }
-      const credIcon = (ok) => ok
-        ? '<span class="token-status--ok">✓</span>'
-        : '<span class="token-status--missing">✗</span>';
 
-      tbody.innerHTML = users.map(u => `
-        <tr>
-          <td>${escHtml(u.username)}</td>
-          <td>${escHtml(u.email)}</td>
-          <td>${escHtml(u.role)}</td>
-          <td style="white-space:nowrap">
-            ID ${credIcon(u.has_meta_app_id)}
-            Secret ${credIcon(u.has_meta_app_secret)}
-            Token ${credIcon(u.has_meta_token)}
-          </td>
-          <td>
-            <button class="btn-small btn-reset-pwd" data-id="${u.id}" data-name="${escHtml(u.username)}">Reset pwd</button>
-            ${u.id !== me.id ? `<button class="btn-small btn-delete-user" data-id="${u.id}" data-name="${escHtml(u.username)}">Delete</button>` : ''}
-          </td>
-        </tr>
-      `).join('');
+      const dsMap = {};
+      for (const ds of windsorDatasources) dsMap[ds.id] = ds.account_name;
+
+      tbody.innerHTML = users.map(u => {
+        const dsLabel = u.windsor_datasource_id
+          ? `<span class="token-status--ok" title="${escHtml(u.windsor_datasource_id)}">✓ ${escHtml(dsMap[u.windsor_datasource_id] || u.windsor_datasource_id)}</span>`
+          : `<span class="token-status--missing">✗</span>`;
+        return `
+          <tr data-uid="${u.id}">
+            <td>${escHtml(u.username)}</td>
+            <td>${escHtml(u.email)}</td>
+            <td>${escHtml(u.role)}</td>
+            <td class="windsor-cell">${dsLabel}</td>
+            <td>
+              <button class="btn-small btn-assign-ds" data-id="${u.id}" data-name="${escHtml(u.username)}" data-current="${escHtml(u.windsor_datasource_id || '')}">Asignar</button>
+              <button class="btn-small btn-reset-pwd" data-id="${u.id}" data-name="${escHtml(u.username)}">Reset pwd</button>
+              ${u.id !== me.id ? `<button class="btn-small btn-delete-user" data-id="${u.id}" data-name="${escHtml(u.username)}">Delete</button>` : ''}
+            </td>
+          </tr>`;
+      }).join('');
+
+      tbody.querySelectorAll('.btn-assign-ds').forEach(btn => {
+        btn.addEventListener('click', () => showAssignDatasource(btn, feedback));
+      });
 
       tbody.querySelectorAll('.btn-delete-user').forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -996,6 +944,60 @@ function initSettingsModal(me) {
       tbody.innerHTML = `<tr><td colspan="5" class="empty-row">Error: ${err.message}</td></tr>`;
     }
   }
+
+  function showAssignDatasource(btn, feedback) {
+    const userId  = btn.dataset.id;
+    const current = btn.dataset.current;
+    const row     = btn.closest('tr');
+    const cell    = row.querySelector('.windsor-cell');
+
+    const options = windsorDatasources.length > 0
+      ? windsorDatasources.map(ds => `<option value="${escHtml(ds.id)}" ${ds.id === current ? 'selected' : ''}>${escHtml(ds.account_name)} (${escHtml(ds.id)})</option>`).join('')
+      : '<option value="">— No hay datasources —</option>';
+
+    cell.innerHTML = `
+      <select class="ds-select" style="font-size:0.78rem;max-width:180px">
+        <option value="">— Sin asignar —</option>
+        ${options}
+      </select>
+      <button class="btn-small btn-save-ds" style="margin-left:4px">Guardar</button>
+      <button class="btn-small btn-cancel-ds" style="margin-left:2px">✕</button>`;
+
+    cell.querySelector('.btn-cancel-ds').addEventListener('click', () => loadAdminUsers());
+
+    cell.querySelector('.btn-save-ds').addEventListener('click', async () => {
+      const datasourceId = cell.querySelector('.ds-select').value || null;
+      try {
+        await apiFetch(`/admin/users/${userId}/windsor-datasource`, {
+          method:  'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ datasourceId }),
+        });
+        showFeedback(feedback, 'success', datasourceId ? 'Cuenta asignada.' : 'Cuenta desasignada.');
+        loadAdminUsers();
+      } catch (err) {
+        showFeedback(feedback, 'error', err.message);
+      }
+    });
+  }
+
+  // ---- Admin: Generate Windsor connection link ----
+  document.getElementById('generateLinkBtn').addEventListener('click', async () => {
+    const btn      = document.getElementById('generateLinkBtn');
+    const feedback = document.getElementById('generateLinkFeedback');
+    btn.disabled   = true;
+    btn.textContent = '⏳ Generando…';
+    try {
+      const { url } = await apiFetch('/api/windsor/generate-link', { method: 'POST' });
+      await navigator.clipboard.writeText(url);
+      showFeedback(feedback, 'success', '¡Link copiado al portapapeles! Envíalo al cliente para que conecte su cuenta de Meta Ads.');
+    } catch (err) {
+      showFeedback(feedback, 'error', err.message);
+    } finally {
+      btn.disabled   = false;
+      btn.textContent = '🔗 Generar link de conexión';
+    }
+  });
 
   // ---- Admin: Create User ----
   document.getElementById('createUserBtn').addEventListener('click', async () => {
@@ -1047,29 +1049,6 @@ async function init() {
   }
 
   headerUsername.textContent = me.username;
-
-  // Handle OAuth redirect-back params
-  const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.has('connected')) {
-    // Show success — open settings → Meta credentials tab and show toast
-    history.replaceState({}, '', '/');
-    setTimeout(() => {
-      document.getElementById('settingsOverlay').classList.remove('hidden');
-      document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.modal-pane').forEach(p => p.classList.add('hidden'));
-      const tokenTab  = document.querySelector('[data-tab="token"]');
-      const tokenPane = document.getElementById('pane-token');
-      if (tokenTab)  tokenTab.classList.add('active');
-      if (tokenPane) tokenPane.classList.remove('hidden');
-      // Show success feedback in the token pane
-      const feedback = document.getElementById('tokenFeedback');
-      if (feedback) showFeedback(feedback, 'success', '¡Cuenta de Facebook conectada! Token guardado correctamente.');
-    }, 150);
-  } else if (urlParams.has('error')) {
-    const msg = urlParams.get('error');
-    showError(`Facebook OAuth error: ${msg}`);
-    history.replaceState({}, '', '/');
-  }
 
   // Logout
   logoutBtn.addEventListener('click', async () => {
