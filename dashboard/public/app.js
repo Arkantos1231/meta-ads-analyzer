@@ -158,7 +158,7 @@ async function apiFetch(path, options = {}) {
   const res = await fetch(path, { credentials: 'include', ...options });
   const json = await res.json();
   if (res.status === 401) {
-    window.location.href = '/login.html';
+    window.location.href = '/login';
     throw new Error('Session expired');
   }
   if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
@@ -1280,7 +1280,7 @@ async function init() {
   // Logout
   logoutBtn.addEventListener('click', async () => {
     await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
-    window.location.href = '/login.html';
+    window.location.href = '/login';
   });
 
   initSettingsModal(me);

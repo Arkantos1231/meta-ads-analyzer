@@ -651,11 +651,15 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 function serveStatic(req, res) {
   let urlPath = new URL(req.url, 'http://x').pathname;
 
+  // Clean URL aliases
+  if (urlPath === '/login') urlPath = '/login.html';
+  if (urlPath === '/dashboard') urlPath = '/index.html';
+
   if (urlPath === '/' || urlPath === '/index.html') {
     try {
       requireAuth(req);
     } catch {
-      res.writeHead(302, { Location: '/login.html' });
+      res.writeHead(302, { Location: '/login' });
       res.end();
       return;
     }
