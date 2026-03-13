@@ -841,9 +841,8 @@ function initSettingsModal(me) {
   if (me.role === 'admin') {
     document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('hidden'));
   } else {
-    // Regular users: connection pane is read-only — no add/remove/connect buttons
+    // Regular users: hide admin-only connection controls but keep verify/add flow
     document.querySelectorAll('.admin-connection-only').forEach(el => el.classList.add('hidden'));
-    // Show the "contact admin" message only for non-admins
     document.querySelectorAll('.admin-connection-only-hide').forEach(el => el.classList.remove('hidden'));
   }
 
@@ -942,8 +941,7 @@ function initSettingsModal(me) {
   document.getElementById('windsorAddAnotherBtn').addEventListener('click', () => {
     document.getElementById('windsorConnected').classList.add('hidden');
     document.getElementById('windsorNotConnected').classList.remove('hidden');
-    document.getElementById('windsorStep1').classList.remove('hidden');
-    document.getElementById('windsorStep2').classList.add('hidden');
+    // Step 1 (generate link) only shown for admins — it has admin-connection-only class
     document.getElementById('windsorSelectDs').classList.add('hidden');
   });
 

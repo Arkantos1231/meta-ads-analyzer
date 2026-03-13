@@ -264,33 +264,31 @@
           <!-- Estado: conectado (one or more datasources) -->
           <div id="windsorConnected" class="hidden">
             <div id="windsorConnectedList" class="windsor-ds-list"></div>
-            <div class="admin-connection-only" style="margin-top:0.75rem;display:flex;gap:0.5rem;flex-wrap:wrap">
+            <div style="margin-top:0.75rem;display:flex;gap:0.5rem;flex-wrap:wrap">
               <button class="btn-primary btn-small" id="windsorAddAnotherBtn">+ Add account</button>
-              <button class="btn-small" id="windsorDisconnectBtn">Disconnect all</button>
+              <button class="btn-small admin-connection-only" id="windsorDisconnectBtn">Disconnect all</button>
             </div>
           </div>
 
-          <!-- Estado: no conectado / flujo de conexión (admin only to initiate) -->
+          <!-- Estado: no conectado / flujo de conexión -->
           <div id="windsorNotConnected">
             <div class="windsor-status-box">
               <span class="token-status--missing">✗</span>
               <span>No accounts connected</span>
             </div>
 
-            <!-- Message for regular users with no accounts assigned -->
-            <p class="modal-hint admin-connection-only-hide" style="margin-top:0.75rem">Contact your administrator to assign your account.</p>
-
-            <!-- Step 1: connect button (admin only) -->
+            <!-- Step 1: generate connection link (admin only) -->
             <div id="windsorStep1" class="admin-connection-only" style="margin-top:1rem">
               <p class="modal-hint">Connect your Meta Ads account through Windsor. A new tab will open.</p>
               <button class="btn-primary" id="windsorConnectBtn">Connect Meta Ads account</button>
             </div>
 
-            <!-- Step 2: verify after connecting in Windsor -->
-            <div id="windsorStep2" class="hidden" style="margin-top:1rem">
-              <p class="modal-hint">✅ Link opened. Complete the connection in Windsor, then come back here.</p>
-              <button class="btn-primary" id="windsorVerifyBtn">Verify connection</button>
-              <button class="btn-small" id="windsorBackBtn" style="margin-left:0.5rem">← Back</button>
+            <!-- Step 2: verify (visible to all users) -->
+            <div id="windsorStep2" style="margin-top:1rem">
+              <p class="modal-hint admin-connection-only-hide">Your admin has shared a Windsor connection link with you. After connecting your Meta Ads account, click below to add it here.</p>
+              <p class="modal-hint admin-connection-only">✅ Link opened. Complete the connection in Windsor, then come back here.</p>
+              <button class="btn-primary" id="windsorVerifyBtn">Check for my accounts</button>
+              <button class="btn-small admin-connection-only" id="windsorBackBtn" style="margin-left:0.5rem">← Back</button>
             </div>
 
             <!-- Step 3: selector if multiple datasources available -->
