@@ -39,8 +39,9 @@ const adsetCount     = document.getElementById('adsetCount');
 const placementCount = document.getElementById('placementCount');
 
 // Filter tags
-const adFilterTag    = document.getElementById('adFilterTag');
-const adsetFilterTag = document.getElementById('adsetFilterTag');
+const adFilterTag       = document.getElementById('adFilterTag');
+const adsetFilterTag    = document.getElementById('adsetFilterTag');
+const placementFilterTag = document.getElementById('placementFilterTag');
 const themeBtn       = document.getElementById('themeBtn');
 
 // Header user area
@@ -80,6 +81,7 @@ let allAdsetRows   = [];
 let allInsightRows  = {};   // keyed by campaign_name
 let allCampaignRows = [];   // full campaign objects (for objective/status)
 let selectedCampaign = null;  // campaign name currently selected
+let selectedAdId     = null;  // ad_id currently selected for placement breakdown
 
 // AI section DOM refs
 const aiSection       = document.getElementById('aiSection');
@@ -288,9 +290,11 @@ function renderCampaigns(campaignRows, insightRows) {
 function onCampaignClick(campaignName, campaignId) {
   if (selectedCampaign === campaignName) {
     selectedCampaign = null;
+    selectedAdId = null;
     campaignBody.querySelectorAll('.campaign-row').forEach(r => r.classList.remove('row-selected'));
     setFilterTag(adFilterTag, null);
     setFilterTag(adsetFilterTag, null);
+    setFilterTag(placementFilterTag, null);
     renderAds(allAdRows);
     renderAdsets(allAdsetRows);
     aiBody.innerHTML = '<p class="ai-placeholder">Select a campaign, then click a button above.</p>';
@@ -560,7 +564,7 @@ function setFilterTag(el, label) {
 // ---------------------------------------------------------------------------
 function renderAds(adRows) {
   if (!adRows || adRows.length === 0) {
-    adBody.innerHTML = `<tr><td colspan="13" class="empty-row">No ad data for selected period.</td></tr>`;
+    adBody.innerHTML = `<tr><td colspan="14" class="empty-row">No ad data for selected period.</td></tr>`;
     adCount.textContent = '0';
     return;
   }
@@ -572,8 +576,12 @@ function renderAds(adRows) {
     const revenue   = getAction(row.action_values, 'purchase');
     const roas      = extractRoas(row.purchase_roas);
 
-    return `<tr>
+    const adStatus = (row.ad_status || '').toUpperCase();
+    const isActive = adStatus === 'ACTIVE';
+    const isSelected = row.ad_id === selectedAdId;
+    return `<tr class="ad-row${isSelected ? ' row-selected' : ''}" data-ad-id="${row.ad_id}" data-ad-name="${row.ad_name}" style="cursor:pointer">
       <td title="${row.ad_name}">${truncate(row.ad_name, 35)}</td>
+      <td><span class="status-badge status-${isActive ? 'active' : 'inactive'}">${isActive ? 'ON' : 'OFF'}</span></td>
       <td title="${row.adset_name}" style="color:var(--text-muted);font-size:0.78rem">${truncate(row.adset_name, 30)}</td>
       <td title="${row.campaign_name}" style="color:var(--text-muted);font-size:0.78rem">${truncate(row.campaign_name, 30)}</td>
       <td class="num">${fmtCurrency(row.spend, 2)}</td>
@@ -590,6 +598,44 @@ function renderAds(adRows) {
   }).join('');
 
   adCount.textContent = sorted.length;
+
+  adBody.querySelectorAll('.ad-row').forEach(row => {
+    row.addEventListener('click', () => onAdClick(row.dataset.adId, row.dataset.adName));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Ad click → filter Placement Breakdown
+// ---------------------------------------------------------------------------
+async function onAdClick(adId, adName) {
+  if (selectedAdId === adId) {
+    // deselect
+    selectedAdId = null;
+    adBody.querySelectorAll('.ad-row').forEach(r => r.classList.remove('row-selected'));
+    setFilterTag(placementFilterTag, null);
+    // reload full placements
+    const qs = `account_id=${encodeURIComponent(accountSelect.value)}&date_preset=${encodeURIComponent(dateSelect.value)}`;
+    try {
+      const data = await apiFetch(`/api/placements?${qs}`);
+      renderPlacements(data.data || []);
+    } catch { /* keep existing */ }
+    return;
+  }
+
+  selectedAdId = adId;
+  adBody.querySelectorAll('.ad-row').forEach(r => {
+    r.classList.toggle('row-selected', r.dataset.adId === adId);
+  });
+  setFilterTag(placementFilterTag, truncate(adName, 40));
+
+  placementBody.innerHTML = `<tr><td colspan="9" class="empty-row">Loading…</td></tr>`;
+  const qs = `account_id=${encodeURIComponent(accountSelect.value)}&date_preset=${encodeURIComponent(dateSelect.value)}&ad_id=${encodeURIComponent(adId)}`;
+  try {
+    const data = await apiFetch(`/api/placements?${qs}`);
+    renderPlacements(data.data || []);
+  } catch (err) {
+    placementBody.innerHTML = `<tr><td colspan="9" class="empty-row">Error: ${err.message}</td></tr>`;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -761,7 +807,7 @@ async function loadDashboard() {
     renderAds(allAdRows);
   } else {
     allAdRows = [];
-    adBody.innerHTML = `<tr><td colspan="13" class="empty-row">Failed to load ads: ${adsResult.reason?.message}</td></tr>`;
+    adBody.innerHTML = `<tr><td colspan="14" class="empty-row">Failed to load ads: ${adsResult.reason?.message}</td></tr>`;
   }
 
   if (adsetsResult.status === 'fulfilled') {
@@ -846,20 +892,120 @@ function initSettingsModal(me) {
   // ---- Conexión Windsor ----
   async function refreshWindsorStatus() {
     try {
-      const data = await apiFetch('/auth/me');
-      const icon = document.getElementById('windsorStatusIcon');
-      const text = document.getElementById('windsorStatusText');
+      const data        = await apiFetch('/auth/me');
+      const connected   = document.getElementById('windsorConnected');
+      const notConnected = document.getElementById('windsorNotConnected');
+      const feedback    = document.getElementById('tokenFeedback');
+
       if (data.hasWindsorDatasource) {
-        icon.textContent = '✓';
-        icon.className   = 'token-status--ok';
-        text.textContent = `Cuenta conectada (${data.windsorDatasourceId})`;
+        connected.classList.remove('hidden');
+        notConnected.classList.add('hidden');
+        document.getElementById('windsorConnectedName').textContent = data.windsorDatasourceId;
       } else {
-        icon.textContent = '✗';
-        icon.className   = 'token-status--missing';
-        text.textContent = 'Sin cuenta conectada';
+        connected.classList.add('hidden');
+        notConnected.classList.remove('hidden');
+        // Reset to step 1
+        document.getElementById('windsorStep1').classList.remove('hidden');
+        document.getElementById('windsorStep2').classList.add('hidden');
+        document.getElementById('windsorSelectDs').classList.add('hidden');
       }
+      feedback.classList.add('hidden');
     } catch { /* ignore */ }
   }
+
+  // Paso 1: generar link y abrir Windsor en nueva pestaña
+  document.getElementById('windsorConnectBtn').addEventListener('click', async () => {
+    const btn      = document.getElementById('windsorConnectBtn');
+    const feedback = document.getElementById('tokenFeedback');
+    btn.disabled   = true;
+    btn.textContent = 'Generando link…';
+    try {
+      const { url } = await apiFetch('/api/windsor/connect', { method: 'POST' });
+      window.open(url, '_blank');
+      document.getElementById('windsorStep1').classList.add('hidden');
+      document.getElementById('windsorStep2').classList.remove('hidden');
+    } catch (err) {
+      showFeedback(feedback, 'error', err.message);
+    } finally {
+      btn.disabled    = false;
+      btn.textContent = 'Conectar cuenta de Meta Ads';
+    }
+  });
+
+  document.getElementById('windsorBackBtn').addEventListener('click', () => {
+    document.getElementById('windsorStep2').classList.add('hidden');
+    document.getElementById('windsorStep1').classList.remove('hidden');
+    document.getElementById('tokenFeedback').classList.add('hidden');
+  });
+
+  // Paso 2: verificar — buscar datasources disponibles
+  document.getElementById('windsorVerifyBtn').addEventListener('click', async () => {
+    const btn      = document.getElementById('windsorVerifyBtn');
+    const feedback = document.getElementById('tokenFeedback');
+    btn.disabled   = true;
+    btn.textContent = 'Verificando…';
+    try {
+      const { datasources } = await apiFetch('/api/windsor/available-datasources');
+      if (!datasources || datasources.length === 0) {
+        showFeedback(feedback, 'error', 'No se encontraron cuentas nuevas. Asegurate de haber completado la conexión en Windsor e intentá de nuevo.');
+      } else if (datasources.length === 1) {
+        await assignDatasource(datasources[0].id, datasources[0].account_name, feedback);
+      } else {
+        // Mostrar selector
+        const select = document.getElementById('windsorDsSelect');
+        select.innerHTML = datasources.map(ds =>
+          `<option value="${escHtml(ds.id)}">${escHtml(ds.account_name)} (${escHtml(ds.id)})</option>`
+        ).join('');
+        document.getElementById('windsorStep2').classList.add('hidden');
+        document.getElementById('windsorSelectDs').classList.remove('hidden');
+      }
+    } catch (err) {
+      showFeedback(feedback, 'error', err.message);
+    } finally {
+      btn.disabled    = false;
+      btn.textContent = 'Verificar conexión';
+    }
+  });
+
+  // Paso 3: confirmar datasource del selector
+  document.getElementById('windsorConfirmBtn').addEventListener('click', async () => {
+    const feedback     = document.getElementById('tokenFeedback');
+    const datasourceId = document.getElementById('windsorDsSelect').value;
+    const name         = document.getElementById('windsorDsSelect').selectedOptions[0]?.text || datasourceId;
+    await assignDatasource(datasourceId, name, feedback);
+  });
+
+  async function assignDatasource(datasourceId, name, feedback) {
+    try {
+      await apiFetch('/settings/windsor-datasource', {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ datasourceId }),
+      });
+      showFeedback(feedback, 'success', `¡Cuenta "${name}" conectada exitosamente!`);
+      refreshWindsorStatus();
+      loadAccounts();
+    } catch (err) {
+      showFeedback(feedback, 'error', err.message);
+    }
+  }
+
+  // Desconectar
+  document.getElementById('windsorDisconnectBtn').addEventListener('click', async () => {
+    if (!confirm('¿Desconectar tu cuenta de Meta Ads?')) return;
+    const feedback = document.getElementById('tokenFeedback');
+    try {
+      await apiFetch('/settings/windsor-datasource', {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ datasourceId: null }),
+      });
+      showFeedback(feedback, 'success', 'Cuenta desconectada.');
+      refreshWindsorStatus();
+    } catch (err) {
+      showFeedback(feedback, 'error', err.message);
+    }
+  });
 
   // ---- Admin: Users ----
   let windsorDatasources = [];

@@ -27,7 +27,8 @@
           <option value="last_7d">Last 7 days</option>
           <option value="last_30d" selected>Last 30 days</option>
           <option value="last_90d">Last 90 days</option>
-          <option value="maximum">All time</option>
+          <option value="last_24m">Últimos 24 meses</option>
+          <option value="maximum">Últimos 36 meses</option>
         </select>
       </div>
       <button id="themeBtn" class="btn-theme" title="Toggle light/dark theme">☀</button>
@@ -116,6 +117,7 @@
           <thead>
             <tr>
               <th>Ad</th>
+              <th>Status</th>
               <th>Ad Set</th>
               <th>Campaign</th>
               <th class="num">Spend</th>
@@ -131,7 +133,7 @@
             </tr>
           </thead>
           <tbody id="adBody">
-            <tr><td colspan="13" class="empty-row">Select an account to load data.</td></tr>
+            <tr><td colspan="14" class="empty-row">Select an account to load data.</td></tr>
           </tbody>
         </table>
       </div>
@@ -164,6 +166,7 @@
       <div class="section-header">
         <h2>Breakdown by Placement</h2>
         <span class="section-badge" id="placementCount"></span>
+        <span class="filter-tag hidden" id="placementFilterTag"></span>
       </div>
       <div class="table-wrapper">
         <table id="placementTable">
@@ -257,11 +260,46 @@
       <div class="modal-pane hidden" id="pane-token">
         <div class="modal-section">
           <h4>Conexión Windsor</h4>
-          <div class="windsor-status-box">
-            <span id="windsorStatusIcon" class="token-status--missing">✗</span>
-            <span id="windsorStatusText">Sin cuenta conectada</span>
+
+          <!-- Estado: conectado -->
+          <div id="windsorConnected" class="hidden">
+            <div class="windsor-status-box">
+              <span class="token-status--ok">✓</span>
+              <span id="windsorConnectedName">Cuenta conectada</span>
+            </div>
+            <button class="btn-small" id="windsorDisconnectBtn" style="margin-top:0.75rem">Desconectar cuenta</button>
           </div>
-          <p class="modal-hint" style="margin-top:0.75rem">Para conectar tu cuenta de Meta Ads, pedile al administrador un link de conexión. Una vez que hayas conectado tu cuenta en Windsor, el administrador deberá asignártela desde el panel de Admin.</p>
+
+          <!-- Estado: no conectado -->
+          <div id="windsorNotConnected">
+            <div class="windsor-status-box">
+              <span class="token-status--missing">✗</span>
+              <span>Sin cuenta conectada</span>
+            </div>
+
+            <!-- Paso 1: botón para conectar -->
+            <div id="windsorStep1" style="margin-top:1rem">
+              <p class="modal-hint">Conectá tu cuenta de Meta Ads a través de Windsor. Se va a abrir una nueva pestaña.</p>
+              <button class="btn-primary" id="windsorConnectBtn">Conectar cuenta de Meta Ads</button>
+            </div>
+
+            <!-- Paso 2: verificar después de conectar en Windsor -->
+            <div id="windsorStep2" class="hidden" style="margin-top:1rem">
+              <p class="modal-hint">✅ Link abierto. Completá la conexión en Windsor y después volvé acá.</p>
+              <button class="btn-primary" id="windsorVerifyBtn">Verificar conexión</button>
+              <button class="btn-small" id="windsorBackBtn" style="margin-left:0.5rem">← Volver</button>
+            </div>
+
+            <!-- Paso 3: selector si hay múltiples cuentas disponibles -->
+            <div id="windsorSelectDs" class="hidden" style="margin-top:1rem">
+              <div class="field-group">
+                <label>Seleccioná tu cuenta de Meta Ads</label>
+                <select id="windsorDsSelect"></select>
+              </div>
+              <button class="btn-primary" id="windsorConfirmBtn">Confirmar</button>
+            </div>
+          </div>
+
           <div class="modal-feedback hidden" id="tokenFeedback"></div>
         </div>
       </div>

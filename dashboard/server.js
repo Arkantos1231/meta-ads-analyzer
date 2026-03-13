@@ -117,19 +117,57 @@ async function windsorGet(datasourceId, fields, params = {}) {
     fields:     fields.join(','),
     ...params,
   });
-  const res  = await fetch(`${WINDSOR_BASE}?${qs}`);
+  const url = `${WINDSOR_BASE}?${qs}`;
+  console.log('[Windsor] GET', url.replace(WINDSOR_API_KEY, '***'));
+  const res  = await fetch(url);
   const json = await res.json();
-  if (json.error) throw Object.assign(new Error(json.error), { status: 400 });
+  if (json.error) {
+    console.error('[Windsor] ERROR:', json.error, '| fields:', fields.join(','), '| params:', params);
+    throw Object.assign(new Error(json.error), { status: 400 });
+  }
+  console.log('[Windsor] OK rows:', (json.data || []).length);
   return json.data || [];
+}
+
+function utcYesterday() {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
 }
 
 function datePresetToParams(preset) {
   if (!preset || preset === 'maximum') {
-    const today = new Date().toISOString().slice(0, 10);
-    return { date_from: '2015-01-01', date_to: today };
+    const from = new Date();
+    from.setUTCMonth(from.getUTCMonth() - 36);
+    return { date_from: from.toISOString().slice(0, 10), date_to: utcYesterday() };
+  }
+  if (preset === 'last_24m') {
+    const from = new Date();
+    from.setUTCMonth(from.getUTCMonth() - 24);
+    return { date_from: from.toISOString().slice(0, 10), date_to: utcYesterday() };
   }
   return { date_preset: preset };
 }
+
+// Parse a Facebook actions/action_values array returned by Windsor
+// (may be a JSON string, a parsed array, or a plain number as fallback)
+function parseActionsArr(field, actionTypes) {
+  if (!field) return 0;
+  let arr = field;
+  if (typeof field === 'string') {
+    try { arr = JSON.parse(field); } catch { return parseFloat(field) || 0; }
+  }
+  if (!Array.isArray(arr)) return parseFloat(arr) || 0;
+  const types = Array.isArray(actionTypes) ? actionTypes : [actionTypes];
+  for (const item of arr) {
+    if (types.some(t => item.action_type === t || (item.action_type || '').includes(t))) {
+      return parseFloat(item.value) || 0;
+    }
+  }
+  return 0;
+}
+
+const PURCHASE_TYPES = ['purchase', 'offsite_conversion.fb_pixel_purchase', 'omni_purchase', 'web_in_store_purchase'];
 
 // Transform flat Windsor rows → Meta-format aggregated by key field
 function aggregateRows(rows, keyField, extraFields) {
@@ -146,9 +184,9 @@ function aggregateRows(rows, keyField, extraFields) {
     m.impressions    += parseInt(row.impressions)    || 0;
     m.clicks         += parseInt(row.clicks)         || 0;
     m.reach          += parseInt(row.reach)          || 0;
-    m.purchases      += parseFloat(row.purchases)    || 0;
-    m.purchase_value += parseFloat(row.purchase_value) || 0;
-    const roas = parseFloat(row.purchase_roas) || parseFloat(row.roas) || 0;
+    m.purchases      += parseActionsArr(row.actions,       PURCHASE_TYPES);
+    m.purchase_value += parseActionsArr(row.action_values, PURCHASE_TYPES);
+    const roas = parseActionsArr(row.purchase_roas, ['omni_purchase', 'purchase']) || parseFloat(row.purchase_roas) || parseFloat(row.roas) || 0;
     if (roas > 0) { m.roas_numer += roas * spend; m.roas_denom += spend; }
   }
   return Object.values(map);
@@ -382,10 +420,9 @@ Use the exact numbers from the data. Be direct and specific.`;
 const routes = {
   '/api/accounts': async (_query, user) => {
     requireWindsorDatasource(user);
-    const today = new Date().toISOString().slice(0, 10);
     const rows  = await windsorGet(user.windsorDatasourceId,
       ['account_id', 'account_name'],
-      { date_from: '2024-01-01', date_to: today }
+      { date_preset: 'last_30d' }
     );
     const seen = new Set();
     const accounts = [];
@@ -426,7 +463,7 @@ const routes = {
     requireWindsorDatasource(user);
     const { date_preset = 'last_30d' } = query;
     const rows = await windsorGet(user.windsorDatasourceId,
-      ['campaign_name', 'campaign_id', 'spend', 'impressions', 'clicks', 'reach', 'purchases', 'purchase_value', 'purchase_roas'],
+      ['campaign_name', 'campaign_id', 'spend', 'impressions', 'clicks', 'reach', 'actions', 'action_values', 'purchase_roas'],
       datePresetToParams(date_preset)
     );
     const aggregated = aggregateRows(rows, 'campaign_name', r => ({ campaign_name: r.campaign_name, campaign_id: r.campaign_id }));
@@ -438,11 +475,13 @@ const routes = {
     requireWindsorDatasource(user);
     const { date_preset = 'last_30d' } = query;
     const rows = await windsorGet(user.windsorDatasourceId,
-      ['ad_id', 'ad_name', 'adset_name', 'campaign_name', 'spend', 'impressions', 'clicks', 'reach', 'purchases', 'purchase_value', 'purchase_roas'],
+      ['ad_id', 'ad_name', 'ad_status', 'adset_name', 'campaign_name', 'spend', 'impressions', 'clicks', 'reach', 'actions', 'action_values', 'purchase_roas'],
       datePresetToParams(date_preset)
     );
-    const aggregated = aggregateRows(rows, 'ad_id', r => ({ ad_id: r.ad_id, ad_name: r.ad_name, adset_name: r.adset_name, campaign_name: r.campaign_name }));
-    const result = aggregated.map(m => ({ ad_id: m.ad_id, ad_name: m.ad_name, adset_name: m.adset_name, campaign_name: m.campaign_name, ...metaMetrics(m) }));
+    console.log('[/api/ads] raw rows from Windsor:', rows.length, rows.length > 0 ? JSON.stringify(rows[0]) : '(empty)');
+    const aggregated = aggregateRows(rows, 'ad_id', r => ({ ad_id: r.ad_id, ad_name: r.ad_name, ad_status: r.ad_status, adset_name: r.adset_name, campaign_name: r.campaign_name }));
+    console.log('[/api/ads] aggregated ads:', aggregated.length);
+    const result = aggregated.map(m => ({ ad_id: m.ad_id, ad_name: m.ad_name, ad_status: (m.ad_status || 'UNKNOWN').toUpperCase(), adset_name: m.adset_name, campaign_name: m.campaign_name, ...metaMetrics(m) }));
     return { data: result };
   },
 
@@ -472,24 +511,26 @@ const routes = {
 
   '/api/placements': async (query, user) => {
     requireWindsorDatasource(user);
-    const { date_preset = 'last_30d' } = query;
-    const rows = await windsorGet(user.windsorDatasourceId,
-      ['publisher_platform', 'placement', 'spend', 'impressions', 'clicks', 'purchases', 'purchase_roas'],
-      datePresetToParams(date_preset)
-    );
+    const { date_preset = 'last_30d', ad_id } = query;
+    const fields = ['publisher_platform', 'platform_position', 'spend', 'impressions', 'clicks', 'actions', 'purchase_roas'];
+    if (ad_id) fields.push('ad_id');
+    const rows = await windsorGet(user.windsorDatasourceId, fields, datePresetToParams(date_preset));
+    const filtered = ad_id ? rows.filter(r => r.ad_id === ad_id) : rows;
     const map = {};
-    for (const row of rows) {
-      const key = `${row.publisher_platform}||${row.placement}`;
+    for (const row of filtered) {
+      const platform  = row.publisher_platform || 'unknown';
+      const placement = row.platform_position  || row.placement || '';
+      const key = `${platform}||${placement}`;
       if (!map[key]) {
-        map[key] = { publisher_platform: row.publisher_platform, placement: row.placement, spend: 0, impressions: 0, clicks: 0, purchases: 0, roas_numer: 0, roas_denom: 0 };
+        map[key] = { publisher_platform: platform, placement, spend: 0, impressions: 0, clicks: 0, purchases: 0, roas_numer: 0, roas_denom: 0 };
       }
       const p     = map[key];
       const spend = parseFloat(row.spend) || 0;
       p.spend       += spend;
       p.impressions += parseInt(row.impressions) || 0;
       p.clicks      += parseInt(row.clicks)      || 0;
-      p.purchases   += parseFloat(row.purchases) || 0;
-      const roas = parseFloat(row.purchase_roas) || 0;
+      p.purchases   += parseActionsArr(row.actions, PURCHASE_TYPES);
+      const roas = parseActionsArr(row.purchase_roas, ['omni_purchase', 'purchase']) || parseFloat(row.purchase_roas) || 0;
       if (roas > 0) { p.roas_numer += roas * spend; p.roas_denom += spend; }
     }
     const result = Object.values(map).map(p => {
@@ -762,12 +803,10 @@ const server = http.createServer(async (req, res) => {
       requireAdmin(req);
       if (!WINDSOR_API_KEY) return sendJson(res, 400, { error: 'WINDSOR_API_KEY not configured' });
 
-      const today = new Date().toISOString().slice(0, 10);
       const qs    = new URLSearchParams({
-        api_key:   WINDSOR_API_KEY,
-        fields:    'datasource,account_name',
-        date_from: '2024-01-01',
-        date_to:   today,
+        api_key:     WINDSOR_API_KEY,
+        fields:      'datasource,account_name',
+        date_preset: 'last_30d',
       });
       const resp = await fetch(`${WINDSOR_BASE}?${qs}`);
       const json = await resp.json();
@@ -782,6 +821,85 @@ const server = http.createServer(async (req, res) => {
         }
       }
       sendJson(res, 200, { datasources });
+    } catch (err) {
+      sendJson(res, err.status || 500, { error: err.message });
+    }
+    return;
+  }
+
+  // POST /api/windsor/connect — any authenticated user generates their own Windsor connection URL
+  if (method === 'POST' && pathname === '/api/windsor/connect') {
+    try {
+      requireAuth(req);
+      if (!WINDSOR_API_KEY) return sendJson(res, 400, { error: 'WINDSOR_API_KEY not configured' });
+
+      const url  = `https://onboard.windsor.ai/api/team/generate-co-user-url/?allowed_sources=facebook&api_key=${encodeURIComponent(WINDSOR_API_KEY)}`;
+      const resp = await fetch(url);
+      const json = await resp.json();
+      if (json.error) return sendJson(res, 400, { error: json.error });
+
+      const connectionUrl = json.url || json.connection_url || (typeof json === 'string' ? json : null);
+      if (!connectionUrl) return sendJson(res, 500, { error: 'Unexpected response from Windsor', raw: json });
+      sendJson(res, 200, { url: connectionUrl });
+    } catch (err) {
+      sendJson(res, err.status || 500, { error: err.message });
+    }
+    return;
+  }
+
+  // GET /api/windsor/available-datasources — datasources not yet assigned to any user
+  if (method === 'GET' && pathname === '/api/windsor/available-datasources') {
+    try {
+      const user = requireAuth(req);
+      if (!WINDSOR_API_KEY) return sendJson(res, 400, { error: 'WINDSOR_API_KEY not configured' });
+
+      const qs    = new URLSearchParams({
+        api_key:     WINDSOR_API_KEY,
+        fields:      'datasource,account_name',
+        date_preset: 'last_30d',
+      });
+      const resp = await fetch(`${WINDSOR_BASE}?${qs}`);
+      const json = await resp.json();
+      if (json.error) return sendJson(res, 400, { error: json.error });
+
+      // Deduplicate Windsor datasources
+      const seen = new Set();
+      const allDatasources = [];
+      for (const row of (json.data || [])) {
+        if (row.datasource && !seen.has(row.datasource)) {
+          seen.add(row.datasource);
+          allDatasources.push({ id: row.datasource, account_name: row.account_name || row.datasource });
+        }
+      }
+
+      // Get datasource IDs already assigned to other users
+      const assignedToOthers = new Set(
+        getAllUsers()
+          .filter(u => u.windsor_datasource_id && u.id !== user.id)
+          .map(u => u.windsor_datasource_id)
+      );
+
+      // Available = not assigned to anyone else
+      const available = allDatasources.filter(ds => !assignedToOthers.has(ds.id));
+      sendJson(res, 200, { datasources: available });
+    } catch (err) {
+      sendJson(res, err.status || 500, { error: err.message });
+    }
+    return;
+  }
+
+  // PUT /settings/windsor-datasource — user self-assigns their own datasource
+  if (method === 'PUT' && pathname === '/settings/windsor-datasource') {
+    try {
+      const user = requireAuth(req);
+      const body = await readBody(req);
+      const { datasourceId } = JSON.parse(body);
+      if (datasourceId) {
+        updateUserWindsorDatasource(user.id, datasourceId);
+      } else {
+        clearUserWindsorDatasource(user.id);
+      }
+      sendJson(res, 200, { ok: true });
     } catch (err) {
       sendJson(res, err.status || 500, { error: err.message });
     }
