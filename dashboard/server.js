@@ -2,7 +2,7 @@
 /**
  * Meta Ads Dashboard — proxy server (multi-tenant)
  *
- * Uses only Node.js 18+ built-ins + better-sqlite3 + bcryptjs.
+ * Use only Node.js 18+ built-ins + better-sqlite3 + bcryptjs.
  * Reads credentials from .env.meta-ads.
  * Serves dashboard/public/ as static files on port 3000.
  * Data source: windsor.ai (instead of Meta Graph API directly).
