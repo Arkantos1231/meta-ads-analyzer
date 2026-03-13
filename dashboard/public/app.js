@@ -840,6 +840,11 @@ function initSettingsModal(me) {
   // Show admin tab if admin
   if (me.role === 'admin') {
     document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('hidden'));
+  } else {
+    // Regular users: connection pane is read-only — no add/remove/connect buttons
+    document.querySelectorAll('.admin-connection-only').forEach(el => el.classList.add('hidden'));
+    // Show the "contact admin" message only for non-admins
+    document.querySelectorAll('.admin-connection-only-hide').forEach(el => el.classList.remove('hidden'));
   }
 
   // Tab switching
@@ -892,19 +897,39 @@ function initSettingsModal(me) {
   // ---- Conexión Windsor ----
   async function refreshWindsorStatus() {
     try {
-      const data        = await apiFetch('/auth/me');
-      const connected   = document.getElementById('windsorConnected');
+      const data         = await apiFetch('/auth/me');
+      const connected    = document.getElementById('windsorConnected');
       const notConnected = document.getElementById('windsorNotConnected');
-      const feedback    = document.getElementById('tokenFeedback');
+      const feedback     = document.getElementById('tokenFeedback');
+      const ids          = data.windsorDatasourceIds || [];
 
-      if (data.hasWindsorDatasource) {
+      if (ids.length > 0) {
         connected.classList.remove('hidden');
         notConnected.classList.add('hidden');
-        document.getElementById('windsorConnectedName').textContent = data.windsorDatasourceId;
+        // Build name map from windsorDatasources (account_id → account_name)
+        const nameMap = {};
+        for (const ds of windsorDatasources) nameMap[ds.id] = ds.account_name;
+        const list = document.getElementById('windsorConnectedList');
+        const isAdmin = me.role === 'admin';
+        list.innerHTML = ids.map(id => `
+          <div class="windsor-ds-item">
+            <span>✓ ${escHtml(nameMap[id] || id)}</span>
+            ${isAdmin ? `<button class="btn-small btn-remove-ds" data-id="${escHtml(id)}">✕</button>` : ''}
+          </div>`).join('');
+        list.querySelectorAll('.btn-remove-ds').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const name = nameMap[btn.dataset.id] || btn.dataset.id;
+            if (!confirm(`Remove account "${name}"?`)) return;
+            try {
+              await apiFetch(`/settings/windsor-datasource/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+              refreshWindsorStatus();
+              loadAccounts();
+            } catch (err) { showFeedback(feedback, 'error', err.message); }
+          });
+        });
       } else {
         connected.classList.add('hidden');
         notConnected.classList.remove('hidden');
-        // Reset to step 1
         document.getElementById('windsorStep1').classList.remove('hidden');
         document.getElementById('windsorStep2').classList.add('hidden');
         document.getElementById('windsorSelectDs').classList.add('hidden');
@@ -913,7 +938,16 @@ function initSettingsModal(me) {
     } catch { /* ignore */ }
   }
 
-  // Paso 1: generar link y abrir Windsor en nueva pestaña
+  // "Add another account" — shows the not-connected flow from connected state
+  document.getElementById('windsorAddAnotherBtn').addEventListener('click', () => {
+    document.getElementById('windsorConnected').classList.add('hidden');
+    document.getElementById('windsorNotConnected').classList.remove('hidden');
+    document.getElementById('windsorStep1').classList.remove('hidden');
+    document.getElementById('windsorStep2').classList.add('hidden');
+    document.getElementById('windsorSelectDs').classList.add('hidden');
+  });
+
+  // Step 1: generate link and open Windsor in new tab
   document.getElementById('windsorConnectBtn').addEventListener('click', async () => {
     const btn      = document.getElementById('windsorConnectBtn');
     const feedback = document.getElementById('tokenFeedback');
@@ -978,11 +1012,11 @@ function initSettingsModal(me) {
   async function assignDatasource(datasourceId, name, feedback) {
     try {
       await apiFetch('/settings/windsor-datasource', {
-        method:  'PUT',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ datasourceId }),
       });
-      showFeedback(feedback, 'success', `¡Cuenta "${name}" conectada exitosamente!`);
+      showFeedback(feedback, 'success', `Account "${name}" connected!`);
       refreshWindsorStatus();
       loadAccounts();
     } catch (err) {
@@ -990,9 +1024,9 @@ function initSettingsModal(me) {
     }
   }
 
-  // Desconectar
+  // Disconnect all — removes all datasources for this user
   document.getElementById('windsorDisconnectBtn').addEventListener('click', async () => {
-    if (!confirm('¿Desconectar tu cuenta de Meta Ads?')) return;
+    if (!confirm('Disconnect all Meta Ads accounts?')) return;
     const feedback = document.getElementById('tokenFeedback');
     try {
       await apiFetch('/settings/windsor-datasource', {
@@ -1000,8 +1034,9 @@ function initSettingsModal(me) {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ datasourceId: null }),
       });
-      showFeedback(feedback, 'success', 'Cuenta desconectada.');
+      showFeedback(feedback, 'success', 'All accounts disconnected.');
       refreshWindsorStatus();
+      loadAccounts();
     } catch (err) {
       showFeedback(feedback, 'error', err.message);
     }
@@ -1035,9 +1070,10 @@ function initSettingsModal(me) {
       for (const ds of windsorDatasources) dsMap[ds.id] = ds.account_name;
 
       tbody.innerHTML = users.map(u => {
-        const dsLabel = u.windsor_datasource_id
-          ? `<span class="token-status--ok" title="${escHtml(u.windsor_datasource_id)}">✓ ${escHtml(dsMap[u.windsor_datasource_id] || u.windsor_datasource_id)}</span>`
-          : `<span class="token-status--missing">✗</span>`;
+        const ids = u.windsor_datasource_ids || [];
+        const dsLabel = ids.length > 0
+          ? ids.map(id => `<span class="ds-chip" title="ID: ${escHtml(id)}">✓ ${escHtml(dsMap[id] || id)}</span>`).join(' ')
+          : `<span class="token-status--missing">✗ None</span>`;
         return `
           <tr data-uid="${u.id}">
             <td>${escHtml(u.username)}</td>
@@ -1045,7 +1081,7 @@ function initSettingsModal(me) {
             <td>${escHtml(u.role)}</td>
             <td class="windsor-cell">${dsLabel}</td>
             <td>
-              <button class="btn-small btn-assign-ds" data-id="${u.id}" data-name="${escHtml(u.username)}" data-current="${escHtml(u.windsor_datasource_id || '')}">Asignar</button>
+              <button class="btn-small btn-assign-ds" data-id="${u.id}" data-name="${escHtml(u.username)}">+ Add</button>
               <button class="btn-small btn-reset-pwd" data-id="${u.id}" data-name="${escHtml(u.username)}">Reset pwd</button>
               ${u.id !== me.id ? `<button class="btn-small btn-delete-user" data-id="${u.id}" data-name="${escHtml(u.username)}">Delete</button>` : ''}
             </td>
@@ -1092,34 +1128,34 @@ function initSettingsModal(me) {
   }
 
   function showAssignDatasource(btn, feedback) {
-    const userId  = btn.dataset.id;
-    const current = btn.dataset.current;
-    const row     = btn.closest('tr');
-    const cell    = row.querySelector('.windsor-cell');
+    const userId = btn.dataset.id;
+    const row    = btn.closest('tr');
+    const cell   = row.querySelector('.windsor-cell');
 
     const options = windsorDatasources.length > 0
-      ? windsorDatasources.map(ds => `<option value="${escHtml(ds.id)}" ${ds.id === current ? 'selected' : ''}>${escHtml(ds.account_name)} (${escHtml(ds.id)})</option>`).join('')
-      : '<option value="">— No hay datasources —</option>';
+      ? windsorDatasources.map(ds => `<option value="${escHtml(ds.id)}">${escHtml(ds.account_name)} (${escHtml(ds.id)})</option>`).join('')
+      : '<option value="">— No datasources available —</option>';
 
     cell.innerHTML = `
       <select class="ds-select" style="font-size:0.78rem;max-width:180px">
-        <option value="">— Sin asignar —</option>
+        <option value="">— Select —</option>
         ${options}
       </select>
-      <button class="btn-small btn-save-ds" style="margin-left:4px">Guardar</button>
+      <button class="btn-small btn-save-ds" style="margin-left:4px">Add</button>
       <button class="btn-small btn-cancel-ds" style="margin-left:2px">✕</button>`;
 
     cell.querySelector('.btn-cancel-ds').addEventListener('click', () => loadAdminUsers());
 
     cell.querySelector('.btn-save-ds').addEventListener('click', async () => {
-      const datasourceId = cell.querySelector('.ds-select').value || null;
+      const datasourceId = cell.querySelector('.ds-select').value;
+      if (!datasourceId) return;
       try {
-        await apiFetch(`/admin/users/${userId}/windsor-datasource`, {
-          method:  'PUT',
+        await apiFetch(`/admin/users/${userId}/windsor-datasources`, {
+          method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ datasourceId }),
         });
-        showFeedback(feedback, 'success', datasourceId ? 'Cuenta asignada.' : 'Cuenta desasignada.');
+        showFeedback(feedback, 'success', 'Account assigned.');
         loadAdminUsers();
       } catch (err) {
         showFeedback(feedback, 'error', err.message);

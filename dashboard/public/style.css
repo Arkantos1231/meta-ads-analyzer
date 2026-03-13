@@ -40,6 +40,7 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 .hidden { display: none !important; }
+.admin-connection-only-hide { display: none; }
 
 html, body {
   height: 100%;
@@ -913,6 +914,21 @@ body.login-page {
   font-size: 0.88rem;
   font-weight: 500;
   color: var(--text);
+}
+
+/* Multi-datasource list in Connection pane */
+.windsor-ds-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.windsor-ds-item {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.4rem 0.75rem; font-size: 0.85rem;
+}
+.windsor-ds-item span { color: var(--text-secondary); }
+/* Datasource chip in admin table */
+.ds-chip {
+  display: inline-block; font-size: 0.75rem; padding: 0.15rem 0.5rem;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent); border-radius: 10px; margin: 1px 2px; white-space: nowrap;
 }
 
 .btn-generate-link {

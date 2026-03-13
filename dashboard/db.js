@@ -79,11 +79,19 @@ export function getDb() {
       expires_at INTEGER NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-    CREATE INDEX IF NOT EXISTS idx_sessions_expires  ON sessions(expires_at);
+    CREATE TABLE IF NOT EXISTS user_datasources (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      datasource_id TEXT    NOT NULL,
+      UNIQUE(user_id, datasource_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_user_id    ON sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_sessions_expires    ON sessions(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_user_ds_user_id     ON user_datasources(user_id);
   `);
 
-  // Migrate: add columns if they don't exist yet
+  // Migrate: add legacy columns if they don't exist yet
   const existingCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
   const newCols = [
     'meta_app_id_enc', 'meta_app_id_iv', 'meta_app_id_tag',
@@ -95,6 +103,13 @@ export function getDb() {
       db.exec(`ALTER TABLE users ADD COLUMN ${col} TEXT DEFAULT NULL`);
     }
   }
+
+  // Migrate: copy existing windsor_datasource_id → user_datasources table
+  db.exec(`
+    INSERT OR IGNORE INTO user_datasources (user_id, datasource_id)
+    SELECT id, windsor_datasource_id FROM users
+    WHERE windsor_datasource_id IS NOT NULL AND windsor_datasource_id != ''
+  `);
 
   // Purge expired sessions on startup
   db.prepare('DELETE FROM sessions WHERE expires_at < unixepoch()').run();
@@ -121,16 +136,58 @@ export function getAllUsers() {
   `).all();
 }
 
+// ---------------------------------------------------------------------------
+// Multi-datasource management
+// ---------------------------------------------------------------------------
+export function getUserDatasources(userId) {
+  return getDb().prepare(
+    'SELECT datasource_id FROM user_datasources WHERE user_id = ? ORDER BY id'
+  ).all(userId).map(r => r.datasource_id);
+}
+
+export function addUserDatasource(userId, datasourceId) {
+  return getDb().prepare(
+    'INSERT OR IGNORE INTO user_datasources (user_id, datasource_id) VALUES (?, ?)'
+  ).run(userId, datasourceId);
+}
+
+export function removeUserDatasource(userId, datasourceId) {
+  return getDb().prepare(
+    'DELETE FROM user_datasources WHERE user_id = ? AND datasource_id = ?'
+  ).run(userId, datasourceId);
+}
+
+export function setUserDatasources(userId, datasourceIds) {
+  const db = getDb();
+  db.prepare('DELETE FROM user_datasources WHERE user_id = ?').run(userId);
+  const insert = db.prepare('INSERT INTO user_datasources (user_id, datasource_id) VALUES (?, ?)');
+  for (const dsId of datasourceIds) insert.run(userId, dsId);
+}
+
+// Returns { userId: [datasourceId, ...] } for all users that have datasources
+export function getAllUserDatasourcesMap() {
+  const rows = getDb().prepare('SELECT user_id, datasource_id FROM user_datasources').all();
+  const map = {};
+  for (const r of rows) {
+    if (!map[r.user_id]) map[r.user_id] = [];
+    map[r.user_id].push(r.datasource_id);
+  }
+  return map;
+}
+
+// Legacy single-value helpers kept for migration compatibility
 export function updateUserWindsorDatasource(userId, datasourceId) {
-  return getDb().prepare(`
-    UPDATE users SET windsor_datasource_id = ?, updated_at = unixepoch() WHERE id = ?
-  `).run(datasourceId, userId);
+  addUserDatasource(userId, datasourceId);
+  return getDb().prepare(
+    'UPDATE users SET windsor_datasource_id = ?, updated_at = unixepoch() WHERE id = ?'
+  ).run(datasourceId, userId);
 }
 
 export function clearUserWindsorDatasource(userId) {
-  return getDb().prepare(`
-    UPDATE users SET windsor_datasource_id = NULL, updated_at = unixepoch() WHERE id = ?
-  `).run(userId);
+  setUserDatasources(userId, []);
+  return getDb().prepare(
+    'UPDATE users SET windsor_datasource_id = NULL, updated_at = unixepoch() WHERE id = ?'
+  ).run(userId);
 }
 
 export function createUser({ username, email, passwordHash, role = 'user' }) {

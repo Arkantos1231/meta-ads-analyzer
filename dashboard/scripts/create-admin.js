@@ -4,6 +4,7 @@
  *
  * Usage:
  *   node scripts/create-admin.js --username admin --email you@company.com --password yourpassword
+ * 
  *
  * Run from the dashboard/ directory.
  */

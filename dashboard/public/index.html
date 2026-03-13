@@ -261,42 +261,45 @@
         <div class="modal-section">
           <h4>Conexión Windsor</h4>
 
-          <!-- Estado: conectado -->
+          <!-- Estado: conectado (one or more datasources) -->
           <div id="windsorConnected" class="hidden">
-            <div class="windsor-status-box">
-              <span class="token-status--ok">✓</span>
-              <span id="windsorConnectedName">Cuenta conectada</span>
+            <div id="windsorConnectedList" class="windsor-ds-list"></div>
+            <div class="admin-connection-only" style="margin-top:0.75rem;display:flex;gap:0.5rem;flex-wrap:wrap">
+              <button class="btn-primary btn-small" id="windsorAddAnotherBtn">+ Add account</button>
+              <button class="btn-small" id="windsorDisconnectBtn">Disconnect all</button>
             </div>
-            <button class="btn-small" id="windsorDisconnectBtn" style="margin-top:0.75rem">Desconectar cuenta</button>
           </div>
 
-          <!-- Estado: no conectado -->
+          <!-- Estado: no conectado / flujo de conexión (admin only to initiate) -->
           <div id="windsorNotConnected">
             <div class="windsor-status-box">
               <span class="token-status--missing">✗</span>
-              <span>Sin cuenta conectada</span>
+              <span>No accounts connected</span>
             </div>
 
-            <!-- Paso 1: botón para conectar -->
-            <div id="windsorStep1" style="margin-top:1rem">
-              <p class="modal-hint">Conectá tu cuenta de Meta Ads a través de Windsor. Se va a abrir una nueva pestaña.</p>
-              <button class="btn-primary" id="windsorConnectBtn">Conectar cuenta de Meta Ads</button>
+            <!-- Message for regular users with no accounts assigned -->
+            <p class="modal-hint admin-connection-only-hide" style="margin-top:0.75rem">Contact your administrator to assign your account.</p>
+
+            <!-- Step 1: connect button (admin only) -->
+            <div id="windsorStep1" class="admin-connection-only" style="margin-top:1rem">
+              <p class="modal-hint">Connect your Meta Ads account through Windsor. A new tab will open.</p>
+              <button class="btn-primary" id="windsorConnectBtn">Connect Meta Ads account</button>
             </div>
 
-            <!-- Paso 2: verificar después de conectar en Windsor -->
+            <!-- Step 2: verify after connecting in Windsor -->
             <div id="windsorStep2" class="hidden" style="margin-top:1rem">
-              <p class="modal-hint">✅ Link abierto. Completá la conexión en Windsor y después volvé acá.</p>
-              <button class="btn-primary" id="windsorVerifyBtn">Verificar conexión</button>
-              <button class="btn-small" id="windsorBackBtn" style="margin-left:0.5rem">← Volver</button>
+              <p class="modal-hint">✅ Link opened. Complete the connection in Windsor, then come back here.</p>
+              <button class="btn-primary" id="windsorVerifyBtn">Verify connection</button>
+              <button class="btn-small" id="windsorBackBtn" style="margin-left:0.5rem">← Back</button>
             </div>
 
-            <!-- Paso 3: selector si hay múltiples cuentas disponibles -->
+            <!-- Step 3: selector if multiple datasources available -->
             <div id="windsorSelectDs" class="hidden" style="margin-top:1rem">
               <div class="field-group">
-                <label>Seleccioná tu cuenta de Meta Ads</label>
+                <label>Select your Meta Ads account</label>
                 <select id="windsorDsSelect"></select>
               </div>
-              <button class="btn-primary" id="windsorConfirmBtn">Confirmar</button>
+              <button class="btn-primary" id="windsorConfirmBtn">Confirm</button>
             </div>
           </div>
 

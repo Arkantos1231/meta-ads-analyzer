@@ -21,8 +21,11 @@ import {
   createUser,
   deleteUser,
   updateUserPassword,
-  updateUserWindsorDatasource,
-  clearUserWindsorDatasource,
+  getUserDatasources,
+  addUserDatasource,
+  removeUserDatasource,
+  setUserDatasources,
+  getAllUserDatasourcesMap,
   deleteAllUserSessions,
   createSession,
   deleteSession,
@@ -68,7 +71,45 @@ if (!OPENAI_API_KEY)  console.warn('⚠️  OPENAI_API_KEY missing — AI recomm
 if (!WINDSOR_API_KEY) console.warn('⚠️  WINDSOR_API_KEY missing — data API disabled');
 else                   console.log('✅  Windsor.ai enabled');
 
-const WINDSOR_BASE = 'https://connectors.windsor.ai/facebook';
+const WINDSOR_BASE    = 'https://connectors.windsor.ai/facebook';
+const WINDSOR_MGMT    = 'https://onboard.windsor.ai/api';
+
+// List all Facebook datasources connected to the Windsor account via management API.
+// Falls back to querying the data connector if the management API fails.
+async function listWindsorDatasources() {
+  // Try management API first — returns all datasources including new co-user connections
+  // even if they have no data yet
+  const mgmtUrl = `${WINDSOR_MGMT}/common/ds-accounts?datasource=facebook&api_key=${encodeURIComponent(WINDSOR_API_KEY)}`;
+  let mgmtResp, mgmtJson;
+  try {
+    mgmtResp = await fetch(mgmtUrl);
+    mgmtJson = await mgmtResp.json();
+  } catch (_) { mgmtJson = null; }
+
+  // Management API returns [{account_id, account_name, datasource:"facebook"}, ...]
+  // Real unique ID per client is account_id — datasource is always "facebook"
+  if (mgmtResp && mgmtResp.ok && Array.isArray(mgmtJson)) {
+    const seen = new Set();
+    return mgmtJson
+      .map(ds => ({ id: ds.account_id, account_name: ds.account_name || ds.account_id }))
+      .filter(ds => ds.id && !seen.has(ds.id) && seen.add(ds.id));
+  }
+
+  // Fallback: query data connector — account_id is the unique key
+  const qs = new URLSearchParams({ api_key: WINDSOR_API_KEY, datasource: 'facebook', fields: 'account_id,account_name', date_preset: 'last_30d' });
+  const resp = await fetch(`${WINDSOR_BASE}?${qs}`);
+  const json = await resp.json();
+  if (json.error) throw Object.assign(new Error(json.error), { status: 400 });
+  const seen = new Set();
+  const list = [];
+  for (const row of (json.data || [])) {
+    if (row.account_id && !seen.has(row.account_id)) {
+      seen.add(row.account_id);
+      list.push({ id: row.account_id, account_name: row.account_name || row.account_id });
+    }
+  }
+  return list;
+}
 
 // ---------------------------------------------------------------------------
 // Auth middleware
@@ -84,7 +125,7 @@ function requireAuth(req) {
 
   return {
     id: user.id, username: user.username, email: user.email, role: user.role,
-    windsorDatasourceId: user.windsor_datasource_id || null,
+    windsorDatasourceIds: getUserDatasources(user.id),
   };
 }
 
@@ -96,7 +137,8 @@ function requireAdmin(req) {
 
 function requireWindsorDatasource(user) {
   if (!WINDSOR_API_KEY) throw Object.assign(new Error('WINDSOR_API_KEY not configured on server'), { status: 500 });
-  if (!user.windsorDatasourceId) throw Object.assign(new Error('No Windsor account configured — ask your admin to assign your account'), { status: 400 });
+  if (!user.windsorDatasourceIds || user.windsorDatasourceIds.length === 0)
+    throw Object.assign(new Error('No Windsor account configured — ask your admin to assign your account'), { status: 400 });
 }
 
 function sessionCookie(token) {
@@ -110,6 +152,25 @@ function clearSessionCookie() {
 // ---------------------------------------------------------------------------
 // Windsor API helper
 // ---------------------------------------------------------------------------
+// Query Windsor for all rows and filter by the user's assigned account_ids.
+// Windsor uses a single "facebook" datasource for all accounts; account_id is the
+// real per-client identifier.  Legacy users may have "facebook" stored (old format) —
+// for them we skip filtering so they keep seeing all data until reassigned.
+async function windsorGetMulti(accountIds, fields, params = {}) {
+  if (!accountIds || accountIds.length === 0) return [];
+
+  // Detect legacy format: "facebook" is not a numeric account_id
+  const isLegacy = accountIds.every(id => !/^\d+$/.test(id));
+
+  // Always include account_id in fields so we can filter
+  const fieldsWithId = fields.includes('account_id') ? fields : ['account_id', ...fields];
+  const rows = await windsorGet('facebook', fieldsWithId, params);
+
+  if (isLegacy) return rows; // old "facebook" entry — no filtering
+  const allowed = new Set(accountIds);
+  return rows.filter(r => r.account_id && allowed.has(r.account_id));
+}
+
 async function windsorGet(datasourceId, fields, params = {}) {
   const qs = new URLSearchParams({
     api_key:    WINDSOR_API_KEY,
@@ -417,28 +478,37 @@ Use the exact numbers from the data. Be direct and specific.`;
 // ---------------------------------------------------------------------------
 // Windsor-backed API routes
 // ---------------------------------------------------------------------------
+
+// Return the account_ids to query: if the caller specified a single account_id
+// and the user is authorized for it, use only that one; otherwise use all assigned.
+function resolveAccountIds(query, user) {
+  const { account_id } = query;
+  if (account_id) {
+    const isLegacy = user.windsorDatasourceIds.every(id => !/^\d+$/.test(id));
+    if (isLegacy || user.windsorDatasourceIds.includes(account_id)) return [account_id];
+    return []; // not authorized for this account
+  }
+  return user.windsorDatasourceIds;
+}
+
 const routes = {
   '/api/accounts': async (_query, user) => {
     requireWindsorDatasource(user);
-    const rows  = await windsorGet(user.windsorDatasourceId,
-      ['account_id', 'account_name'],
-      { date_preset: 'last_30d' }
-    );
-    const seen = new Set();
-    const accounts = [];
-    for (const row of rows) {
-      if (row.account_id && !seen.has(row.account_id)) {
-        seen.add(row.account_id);
-        accounts.push({ account_id: row.account_id, name: row.account_name || row.account_id, account_status: 1 });
-      }
-    }
+    // Use the management API to list accounts — this shows ALL assigned accounts
+    // regardless of whether they have recent data (avoids the "no data = not shown" problem)
+    const all = await listWindsorDatasources();
+    const isLegacy = user.windsorDatasourceIds.every(id => !/^\d+$/.test(id));
+    const allowed  = new Set(user.windsorDatasourceIds);
+    const accounts = all
+      .filter(ds => isLegacy || allowed.has(ds.id))
+      .map(ds => ({ account_id: ds.id, name: ds.account_name || ds.id, account_status: 1 }));
     return { data: accounts };
   },
 
   '/api/campaigns': async (query, user) => {
     requireWindsorDatasource(user);
     const { date_preset = 'last_30d' } = query;
-    const rows = await windsorGet(user.windsorDatasourceId,
+    const rows = await windsorGetMulti(resolveAccountIds(query, user),
       ['campaign_id', 'campaign_name', 'campaign_status', 'objective'],
       datePresetToParams(date_preset)
     );
@@ -462,7 +532,7 @@ const routes = {
   '/api/insights': async (query, user) => {
     requireWindsorDatasource(user);
     const { date_preset = 'last_30d' } = query;
-    const rows = await windsorGet(user.windsorDatasourceId,
+    const rows = await windsorGetMulti(resolveAccountIds(query, user),
       ['campaign_name', 'campaign_id', 'spend', 'impressions', 'clicks', 'reach', 'actions', 'action_values', 'purchase_roas'],
       datePresetToParams(date_preset)
     );
@@ -474,7 +544,7 @@ const routes = {
   '/api/ads': async (query, user) => {
     requireWindsorDatasource(user);
     const { date_preset = 'last_30d' } = query;
-    const rows = await windsorGet(user.windsorDatasourceId,
+    const rows = await windsorGetMulti(resolveAccountIds(query, user),
       ['ad_id', 'ad_name', 'ad_status', 'adset_name', 'campaign_name', 'spend', 'impressions', 'clicks', 'reach', 'actions', 'action_values', 'purchase_roas'],
       datePresetToParams(date_preset)
     );
@@ -488,7 +558,7 @@ const routes = {
   '/api/adsets': async (query, user) => {
     requireWindsorDatasource(user);
     const { date_preset = 'last_30d' } = query;
-    const rows = await windsorGet(user.windsorDatasourceId,
+    const rows = await windsorGetMulti(resolveAccountIds(query, user),
       ['adset_id', 'adset_name', 'campaign_id', 'adset_status'],
       datePresetToParams(date_preset)
     );
@@ -514,7 +584,7 @@ const routes = {
     const { date_preset = 'last_30d', ad_id } = query;
     const fields = ['publisher_platform', 'platform_position', 'spend', 'impressions', 'clicks', 'actions', 'purchase_roas'];
     if (ad_id) fields.push('ad_id');
-    const rows = await windsorGet(user.windsorDatasourceId, fields, datePresetToParams(date_preset));
+    const rows = await windsorGetMulti(resolveAccountIds(query, user), fields, datePresetToParams(date_preset));
     const filtered = ad_id ? rows.filter(r => r.ad_id === ad_id) : rows;
     const map = {};
     for (const row of filtered) {
@@ -666,8 +736,8 @@ const server = http.createServer(async (req, res) => {
         username:             user.username,
         email:                user.email,
         role:                 user.role,
-        hasWindsorDatasource: !!user.windsorDatasourceId,
-        windsorDatasourceId:  user.windsorDatasourceId,
+        hasWindsorDatasource: user.windsorDatasourceIds.length > 0,
+        windsorDatasourceIds: user.windsorDatasourceIds,
       });
     } catch (err) {
       sendJson(res, err.status || 401, { error: err.message });
@@ -709,7 +779,12 @@ const server = http.createServer(async (req, res) => {
   if (method === 'GET' && pathname === '/admin/users') {
     try {
       requireAdmin(req);
-      sendJson(res, 200, { users: getAllUsers() });
+      const dsMap = getAllUserDatasourcesMap();
+      const users = getAllUsers().map(u => ({
+        ...u,
+        windsor_datasource_ids: dsMap[u.id] || [],
+      }));
+      sendJson(res, 200, { users });
     } catch (err) {
       sendJson(res, err.status || 500, { error: err.message });
     }
@@ -773,18 +848,57 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // PUT /admin/users/:id/windsor-datasource
-  const windsorDsMatch = pathname.match(/^\/admin\/users\/(\d+)\/windsor-datasource$/);
-  if (method === 'PUT' && windsorDsMatch) {
+  // PUT /admin/users/:id/windsor-datasources — replace all datasources for a user
+  // POST /admin/users/:id/windsor-datasources — add one datasource
+  // DELETE /admin/users/:id/windsor-datasources/:dsId — remove one datasource
+  const windsorDsMatch = pathname.match(/^\/admin\/users\/(\d+)\/windsor-datasources(\/(.+))?$/);
+  if (windsorDsMatch) {
     try {
       requireAdmin(req);
       const targetId = parseInt(windsorDsMatch[1], 10);
+
+      if (method === 'DELETE' && windsorDsMatch[3]) {
+        removeUserDatasource(targetId, decodeURIComponent(windsorDsMatch[3]));
+        sendJson(res, 200, { ok: true, datasourceIds: getUserDatasources(targetId) });
+        return;
+      }
+
+      const body = await readBody(req);
+      const parsed = JSON.parse(body);
+
+      if (method === 'POST') {
+        // Add one datasource
+        const { datasourceId } = parsed;
+        if (datasourceId) addUserDatasource(targetId, datasourceId);
+        sendJson(res, 200, { ok: true, datasourceIds: getUserDatasources(targetId) });
+        return;
+      }
+
+      if (method === 'PUT') {
+        // Replace all datasources
+        const { datasourceIds } = parsed;
+        setUserDatasources(targetId, Array.isArray(datasourceIds) ? datasourceIds : []);
+        sendJson(res, 200, { ok: true, datasourceIds: getUserDatasources(targetId) });
+        return;
+      }
+    } catch (err) {
+      sendJson(res, err.status || 500, { error: err.message });
+      return;
+    }
+  }
+
+  // Legacy single-datasource endpoint kept for backward compatibility
+  const windsorDsLegacyMatch = pathname.match(/^\/admin\/users\/(\d+)\/windsor-datasource$/);
+  if (method === 'PUT' && windsorDsLegacyMatch) {
+    try {
+      requireAdmin(req);
+      const targetId = parseInt(windsorDsLegacyMatch[1], 10);
       const body = await readBody(req);
       const { datasourceId } = JSON.parse(body);
       if (datasourceId) {
-        updateUserWindsorDatasource(targetId, datasourceId);
+        addUserDatasource(targetId, datasourceId);
       } else {
-        clearUserWindsorDatasource(targetId);
+        setUserDatasources(targetId, []);
       }
       sendJson(res, 200, { ok: true });
     } catch (err) {
@@ -802,24 +916,7 @@ const server = http.createServer(async (req, res) => {
     try {
       requireAdmin(req);
       if (!WINDSOR_API_KEY) return sendJson(res, 400, { error: 'WINDSOR_API_KEY not configured' });
-
-      const qs    = new URLSearchParams({
-        api_key:     WINDSOR_API_KEY,
-        fields:      'datasource,account_name',
-        date_preset: 'last_30d',
-      });
-      const resp = await fetch(`${WINDSOR_BASE}?${qs}`);
-      const json = await resp.json();
-      if (json.error) return sendJson(res, 400, { error: json.error });
-
-      const seen        = new Set();
-      const datasources = [];
-      for (const row of (json.data || [])) {
-        if (row.datasource && !seen.has(row.datasource)) {
-          seen.add(row.datasource);
-          datasources.push({ id: row.datasource, account_name: row.account_name || row.datasource });
-        }
-      }
+      const datasources = await listWindsorDatasources();
       sendJson(res, 200, { datasources });
     } catch (err) {
       sendJson(res, err.status || 500, { error: err.message });
@@ -847,40 +944,17 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // GET /api/windsor/available-datasources — datasources not yet assigned to any user
+  // GET /api/windsor/available-datasources — datasources not yet assigned to the current user
   if (method === 'GET' && pathname === '/api/windsor/available-datasources') {
     try {
       const user = requireAuth(req);
       if (!WINDSOR_API_KEY) return sendJson(res, 400, { error: 'WINDSOR_API_KEY not configured' });
 
-      const qs    = new URLSearchParams({
-        api_key:     WINDSOR_API_KEY,
-        fields:      'datasource,account_name',
-        date_preset: 'last_30d',
-      });
-      const resp = await fetch(`${WINDSOR_BASE}?${qs}`);
-      const json = await resp.json();
-      if (json.error) return sendJson(res, 400, { error: json.error });
+      const allDatasources = await listWindsorDatasources();
 
-      // Deduplicate Windsor datasources
-      const seen = new Set();
-      const allDatasources = [];
-      for (const row of (json.data || [])) {
-        if (row.datasource && !seen.has(row.datasource)) {
-          seen.add(row.datasource);
-          allDatasources.push({ id: row.datasource, account_name: row.account_name || row.datasource });
-        }
-      }
-
-      // Get datasource IDs already assigned to other users
-      const assignedToOthers = new Set(
-        getAllUsers()
-          .filter(u => u.windsor_datasource_id && u.id !== user.id)
-          .map(u => u.windsor_datasource_id)
-      );
-
-      // Available = not assigned to anyone else
-      const available = allDatasources.filter(ds => !assignedToOthers.has(ds.id));
+      // Already assigned to this user — exclude from "available" list
+      const alreadyMine = new Set(user.windsorDatasourceIds);
+      const available = allDatasources.filter(ds => !alreadyMine.has(ds.id));
       sendJson(res, 200, { datasources: available });
     } catch (err) {
       sendJson(res, err.status || 500, { error: err.message });
@@ -888,18 +962,30 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // PUT /settings/windsor-datasource — user self-assigns their own datasource
-  if (method === 'PUT' && pathname === '/settings/windsor-datasource') {
+  // POST /settings/windsor-datasource — add a datasource to current user
+  // DELETE /settings/windsor-datasource/:id — remove a datasource from current user
+  if (pathname.startsWith('/settings/windsor-datasource')) {
     try {
       const user = requireAuth(req);
-      const body = await readBody(req);
-      const { datasourceId } = JSON.parse(body);
-      if (datasourceId) {
-        updateUserWindsorDatasource(user.id, datasourceId);
+      if (method === 'POST') {
+        const body = await readBody(req);
+        const { datasourceId } = JSON.parse(body);
+        if (datasourceId) addUserDatasource(user.id, datasourceId);
+        sendJson(res, 200, { ok: true, datasourceIds: getUserDatasources(user.id) });
+      } else if (method === 'DELETE') {
+        const dsId = pathname.replace('/settings/windsor-datasource/', '');
+        if (dsId) removeUserDatasource(user.id, decodeURIComponent(dsId));
+        sendJson(res, 200, { ok: true, datasourceIds: getUserDatasources(user.id) });
+      } else if (method === 'PUT') {
+        // Legacy: replace single
+        const body = await readBody(req);
+        const { datasourceId } = JSON.parse(body);
+        if (datasourceId) addUserDatasource(user.id, datasourceId);
+        else setUserDatasources(user.id, []);
+        sendJson(res, 200, { ok: true, datasourceIds: getUserDatasources(user.id) });
       } else {
-        clearUserWindsorDatasource(user.id);
+        sendJson(res, 405, { error: 'Method not allowed' });
       }
-      sendJson(res, 200, { ok: true });
     } catch (err) {
       sendJson(res, err.status || 500, { error: err.message });
     }
