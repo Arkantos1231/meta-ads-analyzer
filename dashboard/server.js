@@ -302,8 +302,9 @@ async function getAiRecommendations(payload) {
     return { error: 'AI not configured — add OPENAI_API_KEY to .env.meta-ads and restart the server' };
   }
 
-  const { campaignName, campaignObjective, campaignStatus, campaignInsight, ads, adsets, datePreset } = payload;
-  const ins = campaignInsight || {};
+  const { campaignName, campaignObjective, campaignStatus, campaignInsight, ads, adsets, datePreset, language } = payload;
+  const ins  = campaignInsight || {};
+  const lang = language === 'es' ? 'es' : 'en';
 
   const spend      = parseFloat(ins.spend || 0).toFixed(2);
   const roasRaw    = Array.isArray(ins.purchase_roas) && ins.purchase_roas[0] ? parseFloat(ins.purchase_roas[0].value).toFixed(2) : 'N/A';
@@ -343,6 +344,8 @@ ${adsetsText}
 
 Provide 3–5 specific recommendations.`;
 
+  const langInstruction = lang === 'es' ? ' Respond entirely in Spanish.' : ' Respond entirely in English.';
+
   const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -356,7 +359,7 @@ Provide 3–5 specific recommendations.`;
       messages: [
         {
           role: 'system',
-          content: 'You are a Meta Ads performance analyst. Analyze the campaign data and give 3–5 specific, actionable recommendations to improve ROAS, reduce CPM, or fix underperforming ads. Be concise and direct. Format as a numbered list. Each item: one bold title line + 1–2 sentences of explanation.',
+          content: 'You are a Meta Ads performance analyst. Analyze the campaign data and give 3–5 specific, actionable recommendations to improve ROAS, reduce CPM, or fix underperforming ads. Be concise and direct. Format as a numbered list. Each item: one bold title line + 1–2 sentences of explanation.' + langInstruction,
         },
         { role: 'user', content: userMessage },
       ],
@@ -380,8 +383,9 @@ async function getAiReport(payload) {
     return { error: 'AI not configured — add OPENAI_API_KEY to .env.meta-ads and restart the server' };
   }
 
-  const { campaignName, campaignObjective, campaignStatus, campaignInsight, ads, adsets, datePreset } = payload;
-  const ins = campaignInsight || {};
+  const { campaignName, campaignObjective, campaignStatus, campaignInsight, ads, adsets, datePreset, language } = payload;
+  const ins  = campaignInsight || {};
+  const lang = language === 'es' ? 'es' : 'en';
 
   const spend      = parseFloat(ins.spend || 0).toFixed(2);
   const roasRaw    = Array.isArray(ins.purchase_roas) && ins.purchase_roas[0] ? parseFloat(ins.purchase_roas[0].value).toFixed(2) : 'N/A';
@@ -428,6 +432,8 @@ ${adsTable}
 AD SETS:
 ${adsetsTable}`;
 
+  const langInstruction = lang === 'es' ? ' Write the entire report in Spanish.' : ' Write the entire report in English.';
+
   const systemPrompt = `You are a senior Meta Ads performance analyst. Write a comprehensive campaign performance report in Markdown. Use exactly this structure:
 
 ## Executive Summary
@@ -447,7 +453,7 @@ For each metric section: (1) state the current value, (2) compare to typical Met
 In "Ad Creative Performance": identify top performers and underperformers from the ad data.
 In "Ad Set Status": review each ad set's status and recommend actions.
 In "Strategic Action Plan": write 5–7 prioritized, numbered action items with clear expected impact.
-Use the exact numbers from the data. Be direct and specific.`;
+Use the exact numbers from the data. Be direct and specific.${langInstruction}`;
 
   const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',

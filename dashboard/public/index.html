@@ -16,23 +16,24 @@
     </div>
     <div class="header-controls">
       <div class="control-group">
-        <label for="accountSelect">Account</label>
+        <label for="accountSelect" data-i18n="account">Account</label>
         <select id="accountSelect">
-          <option value="">Loading accounts…</option>
+          <option value="" data-i18n="loading_accounts">Loading accounts…</option>
         </select>
       </div>
       <div class="control-group">
-        <label for="dateSelect">Date range</label>
+        <label for="dateSelect" data-i18n="date_range">Date range</label>
         <select id="dateSelect">
-          <option value="last_7d">Last 7 days</option>
-          <option value="last_30d" selected>Last 30 days</option>
-          <option value="last_90d">Last 90 days</option>
-          <option value="last_24m">Últimos 24 meses</option>
-          <option value="maximum">Últimos 36 meses</option>
+          <option value="last_7d"  data-i18n="last_7d">Last 7 days</option>
+          <option value="last_30d" selected data-i18n="last_30d">Last 30 days</option>
+          <option value="last_90d" data-i18n="last_90d">Last 90 days</option>
+          <option value="last_24m" data-i18n="last_24m">Last 24 months</option>
+          <option value="maximum"  data-i18n="last_36m">Last 36 months</option>
         </select>
       </div>
+      <button id="langBtn" class="btn-theme" title="Switch to Spanish">🌐</button>
       <button id="themeBtn" class="btn-theme" title="Toggle light/dark theme">☀</button>
-      <button id="refreshBtn" class="btn-refresh" title="Refresh data">↻ Refresh</button>
+      <button id="refreshBtn" class="btn-refresh" data-i18n="refresh">↻ Refresh</button>
       <span id="headerUsername" class="header-username"></span>
       <button id="settingsBtn" class="btn-theme" title="Settings">⚙</button>
       <button id="logoutBtn"   class="btn-theme" title="Sign out">⏻</button>
@@ -50,17 +51,17 @@
     <!-- SUMMARY CARDS -->
     <section class="cards-row" id="summaryCards">
       <div class="card" id="card-spend">
-        <div class="card-label">Total Spend</div>
+        <div class="card-label" data-i18n="total_spend">Total Spend</div>
         <div class="card-value" id="val-spend">—</div>
         <div class="card-sub" id="sub-spend"></div>
       </div>
       <div class="card" id="card-roas">
-        <div class="card-label">Purchase ROAS</div>
+        <div class="card-label" data-i18n="purchase_roas">Purchase ROAS</div>
         <div class="card-value" id="val-roas">—</div>
         <div class="card-sub" id="sub-roas"></div>
       </div>
       <div class="card" id="card-purchases">
-        <div class="card-label">Purchases</div>
+        <div class="card-label" data-i18n="purchases">Purchases</div>
         <div class="card-value" id="val-purchases">—</div>
         <div class="card-sub" id="sub-purchases"></div>
       </div>
@@ -79,27 +80,27 @@
     <!-- CAMPAIGN TABLE -->
     <section class="section">
       <div class="section-header">
-        <h2>Campaigns</h2>
+        <h2 data-i18n="campaigns">Campaigns</h2>
         <span class="section-badge" id="campaignCount"></span>
       </div>
       <div class="table-wrapper">
         <table id="campaignTable">
           <thead>
             <tr>
-              <th>Campaign</th>
-              <th>Status</th>
-              <th>Objective</th>
-              <th class="num">Spend</th>
-              <th class="num">Impressions</th>
-              <th class="num">Clicks</th>
+              <th data-i18n="campaign">Campaign</th>
+              <th data-i18n="status">Status</th>
+              <th data-i18n="objective">Objective</th>
+              <th class="num" data-i18n="spend">Spend</th>
+              <th class="num" data-i18n="impressions">Impressions</th>
+              <th class="num" data-i18n="clicks">Clicks</th>
               <th class="num">CTR</th>
               <th class="num">CPM</th>
               <th class="num">ROAS</th>
-              <th class="num">Purchases</th>
+              <th class="num" data-i18n="purchases">Purchases</th>
             </tr>
           </thead>
           <tbody id="campaignBody">
-            <tr><td colspan="10" class="empty-row">Select an account to load data.</td></tr>
+            <tr><td colspan="10" class="empty-row" data-i18n="select_account_to_load">Select an account to load data.</td></tr>
           </tbody>
         </table>
       </div>
@@ -108,7 +109,7 @@
     <!-- ADS TABLE -->
     <section class="section">
       <div class="section-header">
-        <h2>Ads</h2>
+        <h2 data-i18n="ads">Ads</h2>
         <span class="section-badge" id="adCount"></span>
         <span class="filter-tag hidden" id="adFilterTag"></span>
       </div>
@@ -116,24 +117,24 @@
         <table id="adTable">
           <thead>
             <tr>
-              <th>Ad</th>
-              <th>Status</th>
-              <th>Ad Set</th>
-              <th>Campaign</th>
-              <th class="num">Spend</th>
-              <th class="num">Impressions</th>
-              <th class="num">Reach</th>
-              <th class="num">Clicks</th>
+              <th data-i18n="ad">Ad</th>
+              <th data-i18n="status">Status</th>
+              <th data-i18n="ad_set">Ad Set</th>
+              <th data-i18n="campaign">Campaign</th>
+              <th class="num" data-i18n="spend">Spend</th>
+              <th class="num" data-i18n="impressions">Impressions</th>
+              <th class="num" data-i18n="reach">Reach</th>
+              <th class="num" data-i18n="clicks">Clicks</th>
               <th class="num">CTR</th>
               <th class="num">CPM</th>
               <th class="num">CPC</th>
               <th class="num">ROAS</th>
-              <th class="num">Purchases</th>
-              <th class="num">Rev</th>
+              <th class="num" data-i18n="purchases">Purchases</th>
+              <th class="num" data-i18n="rev">Rev</th>
             </tr>
           </thead>
           <tbody id="adBody">
-            <tr><td colspan="14" class="empty-row">Select an account to load data.</td></tr>
+            <tr><td colspan="14" class="empty-row" data-i18n="select_account_to_load">Select an account to load data.</td></tr>
           </tbody>
         </table>
       </div>
@@ -142,7 +143,7 @@
     <!-- AD SETS -->
     <section class="section">
       <div class="section-header">
-        <h2>Ad Sets</h2>
+        <h2 data-i18n="ad_sets">Ad Sets</h2>
         <span class="section-badge" id="adsetCount"></span>
         <span class="filter-tag hidden" id="adsetFilterTag"></span>
       </div>
@@ -150,12 +151,12 @@
         <table id="adsetTable">
           <thead>
             <tr>
-              <th>Ad Set</th>
-              <th>Status</th>
+              <th data-i18n="ad_set">Ad Set</th>
+              <th data-i18n="status">Status</th>
             </tr>
           </thead>
           <tbody id="adsetBody">
-            <tr><td colspan="2" class="empty-row">Select an account to load data.</td></tr>
+            <tr><td colspan="2" class="empty-row" data-i18n="select_account_to_load">Select an account to load data.</td></tr>
           </tbody>
         </table>
       </div>
@@ -164,7 +165,7 @@
     <!-- PLACEMENT BREAKDOWN -->
     <section class="section">
       <div class="section-header">
-        <h2>Breakdown by Placement</h2>
+        <h2 data-i18n="breakdown_by_placement">Breakdown by Placement</h2>
         <span class="section-badge" id="placementCount"></span>
         <span class="filter-tag hidden" id="placementFilterTag"></span>
       </div>
@@ -172,19 +173,19 @@
         <table id="placementTable">
           <thead>
             <tr>
-              <th>Platform</th>
-              <th>Placement</th>
-              <th class="num">Spend</th>
-              <th class="num">Impressions</th>
-              <th class="num">Clicks</th>
+              <th data-i18n="platform">Platform</th>
+              <th data-i18n="placement">Placement</th>
+              <th class="num" data-i18n="spend">Spend</th>
+              <th class="num" data-i18n="impressions">Impressions</th>
+              <th class="num" data-i18n="clicks">Clicks</th>
               <th class="num">CPM</th>
               <th class="num">CPC</th>
               <th class="num">ROAS</th>
-              <th class="num">Purchases</th>
+              <th class="num" data-i18n="purchases">Purchases</th>
             </tr>
           </thead>
           <tbody id="placementBody">
-            <tr><td colspan="9" class="empty-row">Select an account to load data.</td></tr>
+            <tr><td colspan="9" class="empty-row" data-i18n="select_account_to_load">Select an account to load data.</td></tr>
           </tbody>
         </table>
       </div>
@@ -196,19 +197,19 @@
     <aside class="ai-sidebar" id="aiSection">
       <div class="section-header">
         <span class="ai-icon">✦</span>
-        <h2>AI Recommendations</h2>
+        <h2 data-i18n="ai_recommendations">AI Recommendations</h2>
         <span class="section-badge" id="aiCampaignLabel"></span>
       </div>
       <div class="ai-actions">
-        <button id="btnAiRecommend" class="btn-ai-action" disabled>
+        <button id="btnAiRecommend" class="btn-ai-action" disabled data-i18n="ai_generate">
           ✦ Generate Recommendations
         </button>
-        <button id="btnAiReport" class="btn-ai-report" disabled>
+        <button id="btnAiReport" class="btn-ai-report" disabled data-i18n="ai_report">
           📄 Generate PDF Report
         </button>
       </div>
       <div id="aiBody">
-        <p class="ai-placeholder">Select a campaign, then click a button above.</p>
+        <p class="ai-placeholder" data-i18n="ai_placeholder">Select a campaign, then click a button above.</p>
       </div>
     </aside>
 
@@ -217,56 +218,56 @@
   </main>
 
   <footer class="footer">
-    Powered by Windsor.ai &nbsp;·&nbsp; Data refreshed: <span id="lastRefresh">—</span>
+    <span data-i18n="powered_by">Powered by Windsor.ai</span> &nbsp;·&nbsp; <span data-i18n="data_refreshed">Data refreshed</span>: <span id="lastRefresh">—</span>
   </footer>
 
   <!-- SETTINGS MODAL -->
   <div class="modal-overlay hidden" id="settingsOverlay">
     <div class="modal-box">
       <div class="modal-header">
-        <h3>Settings</h3>
+        <h3 data-i18n="settings_title">Settings</h3>
         <button class="modal-close" id="settingsClose" title="Close">✕</button>
       </div>
 
       <!-- Tab bar -->
       <div class="modal-tabs">
-        <button class="modal-tab active" data-tab="profile">Profile</button>
-        <button class="modal-tab" data-tab="token">Conexión</button>
-        <button class="modal-tab admin-only hidden" data-tab="admin">Admin</button>
+        <button class="modal-tab active" data-tab="profile" data-i18n="tab_profile">Profile</button>
+        <button class="modal-tab" data-tab="token" data-i18n="tab_connection">Connection</button>
+        <button class="modal-tab admin-only hidden" data-tab="admin" data-i18n="tab_admin">Admin</button>
       </div>
 
       <!-- Profile pane -->
       <div class="modal-pane" id="pane-profile">
         <div class="modal-section">
-          <h4>Change Password</h4>
+          <h4 data-i18n="change_password">Change Password</h4>
           <div class="field-group">
-            <label for="currentPassword">Current password</label>
+            <label for="currentPassword" data-i18n="current_password">Current password</label>
             <input type="password" id="currentPassword" autocomplete="current-password" />
           </div>
           <div class="field-group">
-            <label for="newPassword">New password <span class="field-hint">(min 8 chars)</span></label>
+            <label for="newPassword"><span data-i18n="new_password">New password</span> <span class="field-hint" data-i18n="min_8_chars">(min 8 chars)</span></label>
             <input type="password" id="newPassword" autocomplete="new-password" />
           </div>
           <div class="field-group">
-            <label for="confirmPassword">Confirm new password</label>
+            <label for="confirmPassword" data-i18n="confirm_password">Confirm new password</label>
             <input type="password" id="confirmPassword" autocomplete="new-password" />
           </div>
-          <button class="btn-primary" id="changePasswordBtn">Update Password</button>
+          <button class="btn-primary" id="changePasswordBtn" data-i18n="update_password">Update Password</button>
           <div class="modal-feedback hidden" id="profileFeedback"></div>
         </div>
       </div>
 
-      <!-- Conexión pane -->
+      <!-- Connection pane -->
       <div class="modal-pane hidden" id="pane-token">
         <div class="modal-section">
-          <h4>Conexión Windsor</h4>
+          <h4 data-i18n="windsor_connection">Windsor Connection</h4>
 
           <!-- Estado: conectado (one or more datasources) -->
           <div id="windsorConnected" class="hidden">
             <div id="windsorConnectedList" class="windsor-ds-list"></div>
             <div style="margin-top:0.75rem;display:flex;gap:0.5rem;flex-wrap:wrap">
-              <button class="btn-primary btn-small" id="windsorAddAnotherBtn">+ Add account</button>
-              <button class="btn-small admin-connection-only" id="windsorDisconnectBtn">Disconnect all</button>
+              <button class="btn-primary btn-small" id="windsorAddAnotherBtn" data-i18n="add_account">+ Add account</button>
+              <button class="btn-small admin-connection-only" id="windsorDisconnectBtn" data-i18n="disconnect_all">Disconnect all</button>
             </div>
           </div>
 
@@ -274,30 +275,30 @@
           <div id="windsorNotConnected">
             <div class="windsor-status-box">
               <span class="token-status--missing">✗</span>
-              <span>No accounts connected</span>
+              <span data-i18n="no_accounts_connected">No accounts connected</span>
             </div>
 
             <!-- Step 1: generate connection link (admin only) -->
             <div id="windsorStep1" class="admin-connection-only" style="margin-top:1rem">
-              <p class="modal-hint">Connect your Meta Ads account through Windsor. A new tab will open.</p>
-              <button class="btn-primary" id="windsorConnectBtn">Connect Meta Ads account</button>
+              <p class="modal-hint" data-i18n="connect_hint">Connect your Meta Ads account through Windsor. A new tab will open.</p>
+              <button class="btn-primary" id="windsorConnectBtn" data-i18n="connect_meta">Connect Meta Ads account</button>
             </div>
 
             <!-- Step 2: verify (visible to all users) -->
             <div id="windsorStep2" style="margin-top:1rem">
-              <p class="modal-hint admin-connection-only-hide">Your admin has shared a Windsor connection link with you. After connecting your Meta Ads account, click below to add it here.</p>
-              <p class="modal-hint admin-connection-only">✅ Link opened. Complete the connection in Windsor, then come back here.</p>
-              <button class="btn-primary" id="windsorVerifyBtn">Check for my accounts</button>
-              <button class="btn-small admin-connection-only" id="windsorBackBtn" style="margin-left:0.5rem">← Back</button>
+              <p class="modal-hint admin-connection-only-hide" data-i18n="contact_admin">Your admin has shared a Windsor connection link with you. After connecting your Meta Ads account, click below to add it here.</p>
+              <p class="modal-hint admin-connection-only" data-i18n="link_opened">✅ Link opened. Complete the connection in Windsor, then come back here.</p>
+              <button class="btn-primary" id="windsorVerifyBtn" data-i18n="check_accounts">Check for my accounts</button>
+              <button class="btn-small admin-connection-only" id="windsorBackBtn" style="margin-left:0.5rem" data-i18n="back">← Back</button>
             </div>
 
             <!-- Step 3: selector if multiple datasources available -->
             <div id="windsorSelectDs" class="hidden" style="margin-top:1rem">
               <div class="field-group">
-                <label>Select your Meta Ads account</label>
+                <label data-i18n="select_meta_account">Select your Meta Ads account</label>
                 <select id="windsorDsSelect"></select>
               </div>
-              <button class="btn-primary" id="windsorConfirmBtn">Confirm</button>
+              <button class="btn-primary" id="windsorConfirmBtn" data-i18n="confirm">Confirm</button>
             </div>
           </div>
 
@@ -309,49 +310,49 @@
       <div class="modal-pane hidden" id="pane-admin">
         <div class="modal-section">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
-            <h4>Users</h4>
-            <button class="btn-small btn-generate-link" id="generateLinkBtn">🔗 Generar link de conexión</button>
+            <h4 data-i18n="users">Users</h4>
+            <button class="btn-small btn-generate-link" id="generateLinkBtn" data-i18n="generate_link_btn">🔗 Generate connection link</button>
           </div>
           <div class="modal-feedback hidden" id="generateLinkFeedback"></div>
           <table class="admin-user-table" id="adminUserTable">
             <thead>
               <tr>
-                <th>Usuario</th>
-                <th>Email</th>
-                <th>Rol</th>
-                <th>Windsor</th>
-                <th>Acciones</th>
+                <th data-i18n="col_username">Username</th>
+                <th data-i18n="col_email">Email</th>
+                <th data-i18n="col_role">Role</th>
+                <th data-i18n="col_windsor">Windsor</th>
+                <th data-i18n="col_actions">Actions</th>
               </tr>
             </thead>
             <tbody id="adminUserBody">
-              <tr><td colspan="5" class="empty-row">Loading…</td></tr>
+              <tr><td colspan="5" class="empty-row" data-i18n="loading">Loading…</td></tr>
             </tbody>
           </table>
         </div>
 
         <div class="modal-section">
-          <h4>Create User</h4>
+          <h4 data-i18n="create_user">Create User</h4>
           <div class="admin-create-form">
             <div class="field-group">
-              <label for="newUsername">Username</label>
+              <label for="newUsername" data-i18n="label_username">Username</label>
               <input type="text" id="newUsername" autocomplete="off" />
             </div>
             <div class="field-group">
-              <label for="newEmail">Email</label>
+              <label for="newEmail" data-i18n="label_email">Email</label>
               <input type="email" id="newEmail" autocomplete="off" />
             </div>
             <div class="field-group">
-              <label for="newUserPassword">Password <span class="field-hint">(min 8 chars)</span></label>
+              <label for="newUserPassword"><span data-i18n="label_password">Password</span> <span class="field-hint" data-i18n="min_8_chars">(min 8 chars)</span></label>
               <input type="password" id="newUserPassword" autocomplete="new-password" />
             </div>
             <div class="field-group">
-              <label for="newUserRole">Role</label>
+              <label for="newUserRole" data-i18n="label_role">Role</label>
               <select id="newUserRole">
-                <option value="user">User</option>
-                <option value="admin">Admin</option>
+                <option value="user" data-i18n="role_user">User</option>
+                <option value="admin" data-i18n="role_admin">Admin</option>
               </select>
             </div>
-            <button class="btn-primary" id="createUserBtn">Create User</button>
+            <button class="btn-primary" id="createUserBtn" data-i18n="btn_create_user">Create User</button>
           </div>
           <div class="modal-feedback hidden" id="adminFeedback"></div>
         </div>

@@ -5,6 +5,8 @@
  * Communicates only with the local proxy server on port 3000.
  */
 
+import { t, getLang, setLang, applyI18n } from './i18n.js';
+
 // ---------------------------------------------------------------------------
 // DOM refs
 // ---------------------------------------------------------------------------
@@ -39,10 +41,11 @@ const adsetCount     = document.getElementById('adsetCount');
 const placementCount = document.getElementById('placementCount');
 
 // Filter tags
-const adFilterTag       = document.getElementById('adFilterTag');
-const adsetFilterTag    = document.getElementById('adsetFilterTag');
+const adFilterTag        = document.getElementById('adFilterTag');
+const adsetFilterTag     = document.getElementById('adsetFilterTag');
 const placementFilterTag = document.getElementById('placementFilterTag');
-const themeBtn       = document.getElementById('themeBtn');
+const themeBtn           = document.getElementById('themeBtn');
+const langBtn            = document.getElementById('langBtn');
 
 // Header user area
 const headerUsername = document.getElementById('headerUsername');
@@ -74,14 +77,47 @@ themeBtn.addEventListener('click', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Module-level data state (for click-to-filter + AI)
+// Language toggle
 // ---------------------------------------------------------------------------
-let allAdRows      = [];
-let allAdsetRows   = [];
+function applyLangBtn() {
+  const lang = getLang();
+  langBtn.title = t('lang_toggle_title');
+  langBtn.setAttribute('aria-label', lang === 'en' ? 'EN' : 'ES');
+  // Show current lang as small text next to globe
+  langBtn.textContent = '🌐 ' + (lang === 'en' ? 'EN' : 'ES');
+}
+
+applyLangBtn();
+
+langBtn.addEventListener('click', () => {
+  const next = getLang() === 'en' ? 'es' : 'en';
+  setLang(next);
+  applyLangBtn();
+  // Update date options (data-i18n on <option> elements)
+  document.querySelectorAll('#dateSelect option[data-i18n]').forEach(opt => {
+    opt.textContent = t(opt.dataset.i18n);
+  });
+  // Re-render dynamic content with current data
+  rerenderAll();
+});
+
+// Apply i18n on page load
+applyI18n();
+// Also update date options on load
+document.querySelectorAll('#dateSelect option[data-i18n]').forEach(opt => {
+  opt.textContent = t(opt.dataset.i18n);
+});
+
+// ---------------------------------------------------------------------------
+// Module-level data state (for click-to-filter + AI + re-render)
+// ---------------------------------------------------------------------------
+let allAdRows       = [];
+let allAdsetRows    = [];
 let allInsightRows  = {};   // keyed by campaign_name
-let allCampaignRows = [];   // full campaign objects (for objective/status)
-let selectedCampaign = null;  // campaign name currently selected
-let selectedAdId     = null;  // ad_id currently selected for placement breakdown
+let allCampaignRows = [];   // full campaign objects
+let selectedCampaign = null;
+let selectedAdId     = null;
+let dataLoaded       = false;
 
 // AI section DOM refs
 const aiSection       = document.getElementById('aiSection');
@@ -89,6 +125,31 @@ const aiBody          = document.getElementById('aiBody');
 const aiCampaignLabel = document.getElementById('aiCampaignLabel');
 const btnAiRecommend  = document.getElementById('btnAiRecommend');
 const btnAiReport     = document.getElementById('btnAiReport');
+
+// Re-render all currently loaded data (called on language switch)
+function rerenderAll() {
+  if (!dataLoaded) return;
+  const insightRows = Object.values(allInsightRows);
+  renderSummary(insightRows);
+  renderCampaigns(allCampaignRows, insightRows);
+  if (selectedCampaign) {
+    const filteredAds    = allAdRows.filter(r => r.campaign_name === selectedCampaign);
+    const selectedRow    = allCampaignRows.find(c => c.name === selectedCampaign);
+    const filteredAdsets = allAdsetRows.filter(r => r.campaign_id === selectedRow?.id);
+    renderAds(filteredAds);
+    renderAdsets(filteredAdsets);
+  } else {
+    renderAds(allAdRows);
+    renderAdsets(allAdsetRows);
+  }
+  // AI buttons
+  btnAiRecommend.textContent = t('ai_generate');
+  btnAiReport.textContent    = t('ai_report');
+  // AI placeholder
+  if (!selectedCampaign) {
+    aiBody.innerHTML = `<p class="ai-placeholder">${t('ai_placeholder')}</p>`;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Fetch helpers
@@ -105,7 +166,7 @@ async function apiFetch(path, options = {}) {
 }
 
 function showError(msg) {
-  errorBanner.textContent = `Error: ${msg}`;
+  errorBanner.textContent = `${t('error_prefix')}: ${msg}`;
   errorBanner.classList.remove('hidden');
 }
 
@@ -160,28 +221,19 @@ function extractRoas(purchase_roas) {
 // ---------------------------------------------------------------------------
 function statusBadge(status = '') {
   const s = status.toLowerCase();
-  if (s === 'active')              return `<span class="badge badge-active">Active</span>`;
-  if (s === 'paused')              return `<span class="badge badge-paused">Paused</span>`;
-  if (s === 'learning')            return `<span class="badge badge-learning">Learning</span>`;
-  if (s === 'learning_limited')    return `<span class="badge badge-limited">Learning Limited</span>`;
+  if (s === 'active')              return `<span class="badge badge-active">${t('badge_active')}</span>`;
+  if (s === 'paused')              return `<span class="badge badge-paused">${t('badge_paused')}</span>`;
+  if (s === 'learning')            return `<span class="badge badge-learning">${t('badge_learning')}</span>`;
+  if (s === 'learning_limited')    return `<span class="badge badge-limited">${t('badge_learning_limited')}</span>`;
   if (s === 'deleted' || s === 'archived') return `<span class="badge badge-paused">${status}</span>`;
   return `<span class="badge badge-unknown">${status || '—'}</span>`;
-}
-
-function learnBadge(stageInfo) {
-  if (!stageInfo) return `<span class="badge badge-success">Out of Learning</span>`;
-  const status = (stageInfo.status || '').toLowerCase();
-  if (status === 'learning')         return `<span class="badge badge-learning">Learning</span>`;
-  if (status === 'learning_limited') return `<span class="badge badge-limited">Learning Limited</span>`;
-  if (status === 'success')          return `<span class="badge badge-success">Graduated</span>`;
-  return `<span class="badge badge-unknown">${stageInfo.status || '—'}</span>`;
 }
 
 // ---------------------------------------------------------------------------
 // Loading placeholder rows
 // ---------------------------------------------------------------------------
 function loadingRow(cols) {
-  return `<tr class="loading-row"><td colspan="${cols}"><span class="spinner"></span> Loading…</td></tr>`;
+  return `<tr class="loading-row"><td colspan="${cols}"><span class="spinner"></span> ${t('loading')}</td></tr>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -217,11 +269,11 @@ function renderSummary(insightRows) {
   valCpm.textContent       = avgCpm !== null ? fmtCurrency(avgCpm, 2) : '—';
   valCtr.textContent       = avgCtr !== null ? fmtPct(avgCtr) : '—';
 
-  subSpend.textContent     = `${fmtNumber(totalImpressions)} impressions`;
-  subRoas.textContent      = `Weighted by spend`;
-  subPurchases.textContent = `${fmtNumber(totalClicks)} clicks`;
-  subCpm.textContent       = `Weighted avg CPM`;
-  subCtr.textContent       = `${fmtNumber(totalClicks)} clicks`;
+  subSpend.textContent     = `${fmtNumber(totalImpressions)} ${t('impressions').toLowerCase()}`;
+  subRoas.textContent      = t('weighted_by_spend');
+  subPurchases.textContent = `${fmtNumber(totalClicks)} ${t('clicks').toLowerCase()}`;
+  subCpm.textContent       = t('weighted_avg_cpm');
+  subCtr.textContent       = `${fmtNumber(totalClicks)} ${t('clicks').toLowerCase()}`;
 }
 
 function resetSummary() {
@@ -243,7 +295,7 @@ function renderCampaigns(campaignRows, insightRows) {
   }
 
   if (!campaignRows || campaignRows.length === 0) {
-    campaignBody.innerHTML = `<tr><td colspan="10" class="empty-row">No campaigns found.</td></tr>`;
+    campaignBody.innerHTML = `<tr><td colspan="10" class="empty-row">${t('no_campaigns')}</td></tr>`;
     campaignCount.textContent = '0';
     return;
   }
@@ -297,7 +349,7 @@ function onCampaignClick(campaignName, campaignId) {
     setFilterTag(placementFilterTag, null);
     renderAds(allAdRows);
     renderAdsets(allAdsetRows);
-    aiBody.innerHTML = '<p class="ai-placeholder">Select a campaign, then click a button above.</p>';
+    aiBody.innerHTML = `<p class="ai-placeholder">${t('ai_placeholder')}</p>`;
     aiCampaignLabel.textContent = '';
     btnAiRecommend.disabled = true;
     btnAiReport.disabled    = true;
@@ -314,7 +366,7 @@ function onCampaignClick(campaignName, campaignId) {
     renderAds(filteredAds);
     renderAdsets(filteredAdsets);
     aiCampaignLabel.textContent = truncate(campaignName, 50);
-    aiBody.innerHTML = '<p class="ai-placeholder">Campaign selected — use a button above to generate AI analysis.</p>';
+    aiBody.innerHTML = `<p class="ai-placeholder">${t('ai_campaign_selected')}</p>`;
     btnAiRecommend.disabled = false;
     btnAiReport.disabled    = false;
     btnAiRecommend.dataset.campaignName = campaignName;
@@ -363,13 +415,14 @@ function buildAiPayload(campaignName, campaignId) {
     ads:       filteredAds,
     adsets:    filteredAdsets,
     datePreset: dateSelect.value,
+    language:   getLang(),
   };
 }
 
 async function fetchAiRecommendations(campaignName, campaignId) {
   aiBody.innerHTML = `<div class="ai-loading">
     <div class="ai-dots"><span></span><span></span><span></span></div>
-    Analyzing campaign performance…
+    ${t('ai_analyzing')}
   </div>`;
   btnAiRecommend.disabled = true;
   btnAiReport.disabled    = true;
@@ -393,7 +446,7 @@ async function fetchAiRecommendations(campaignName, campaignId) {
 
 async function generatePdfReport(campaignName, campaignId) {
   const origLabel = btnAiReport.textContent;
-  btnAiReport.textContent  = '⏳ Generating report…';
+  btnAiReport.textContent  = t('ai_generating');
   btnAiReport.disabled     = true;
   btnAiRecommend.disabled  = true;
 
@@ -404,7 +457,7 @@ async function generatePdfReport(campaignName, campaignId) {
       body:    JSON.stringify(buildAiPayload(campaignName, campaignId)),
     });
     if (json.error) {
-      aiBody.innerHTML = `<div class="ai-error">⚠ Report error: ${json.error}</div>`;
+      aiBody.innerHTML = `<div class="ai-error">⚠ ${t('report_title')} error: ${json.error}</div>`;
       return;
     }
     openReportWindow(campaignName, json.report, dateSelect.value);
@@ -462,14 +515,15 @@ function reportMarkdownToHtml(md) {
 
 function openReportWindow(campaignName, markdown, datePreset) {
   const bodyHtml = reportMarkdownToHtml(markdown);
-  const now      = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const lang     = getLang();
+  const now      = new Date().toLocaleDateString(lang === 'es' ? 'es-ES' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const period   = datePreset.replace(/_/g, ' ');
 
   const html = `<!DOCTYPE html>
-<html lang="en">
+<html lang="${lang}">
 <head>
   <meta charset="UTF-8">
-  <title>Report — ${campaignName}</title>
+  <title>${t('report_title')} — ${campaignName}</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -517,26 +571,26 @@ function openReportWindow(campaignName, markdown, datePreset) {
   </style>
 </head>
 <body>
-  <button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
+  <button class="print-btn" onclick="window.print()">${t('report_print')}</button>
   <div class="rpt-header">
     <div>
-      <div class="rpt-title">Campaign Performance Report</div>
+      <div class="rpt-title">${t('report_title')}</div>
       <div class="rpt-campaign">${campaignName}</div>
     </div>
     <div class="rpt-meta">
-      Period: ${period}<br>
-      Generated: ${now}<br>
+      ${t('report_period')}: ${period}<br>
+      ${t('report_generated')}: ${now}<br>
       Meta Ads Dashboard
     </div>
   </div>
   ${bodyHtml}
-  <div class="rpt-footer">Generated by Meta Ads Dashboard · Powered by AI · ${now}</div>
+  <div class="rpt-footer">${t('report_footer')} · ${now}</div>
 </body>
 </html>`;
 
   const win = window.open('', '_blank');
   if (!win) {
-    alert('Pop-up blocked. Please allow pop-ups for this page and try again.');
+    alert(t('popup_blocked'));
     return;
   }
   win.document.write(html);
@@ -551,7 +605,7 @@ function setFilterTag(el, label) {
     el.innerHTML = '';
   } else {
     el.classList.remove('hidden');
-    el.innerHTML = `Filtered: ${label} <span class="clear-filter" title="Clear filter">✕</span>`;
+    el.innerHTML = `${t('filtered')}: ${label} <span class="clear-filter" title="Clear filter">✕</span>`;
     el.querySelector('.clear-filter').addEventListener('click', (e) => {
       e.stopPropagation();
       onCampaignClick(selectedCampaign, null);
@@ -564,7 +618,7 @@ function setFilterTag(el, label) {
 // ---------------------------------------------------------------------------
 function renderAds(adRows) {
   if (!adRows || adRows.length === 0) {
-    adBody.innerHTML = `<tr><td colspan="14" class="empty-row">No ad data for selected period.</td></tr>`;
+    adBody.innerHTML = `<tr><td colspan="14" class="empty-row">${t('no_ads')}</td></tr>`;
     adCount.textContent = '0';
     return;
   }
@@ -609,11 +663,9 @@ function renderAds(adRows) {
 // ---------------------------------------------------------------------------
 async function onAdClick(adId, adName) {
   if (selectedAdId === adId) {
-    // deselect
     selectedAdId = null;
     adBody.querySelectorAll('.ad-row').forEach(r => r.classList.remove('row-selected'));
     setFilterTag(placementFilterTag, null);
-    // reload full placements
     const qs = `account_id=${encodeURIComponent(accountSelect.value)}&date_preset=${encodeURIComponent(dateSelect.value)}`;
     try {
       const data = await apiFetch(`/api/placements?${qs}`);
@@ -628,13 +680,13 @@ async function onAdClick(adId, adName) {
   });
   setFilterTag(placementFilterTag, truncate(adName, 40));
 
-  placementBody.innerHTML = `<tr><td colspan="9" class="empty-row">Loading…</td></tr>`;
+  placementBody.innerHTML = `<tr><td colspan="9" class="empty-row">${t('loading')}</td></tr>`;
   const qs = `account_id=${encodeURIComponent(accountSelect.value)}&date_preset=${encodeURIComponent(dateSelect.value)}&ad_id=${encodeURIComponent(adId)}`;
   try {
     const data = await apiFetch(`/api/placements?${qs}`);
     renderPlacements(data.data || []);
   } catch (err) {
-    placementBody.innerHTML = `<tr><td colspan="9" class="empty-row">Error: ${err.message}</td></tr>`;
+    placementBody.innerHTML = `<tr><td colspan="9" class="empty-row">${t('error_prefix')}: ${err.message}</td></tr>`;
   }
 }
 
@@ -643,7 +695,7 @@ async function onAdClick(adId, adName) {
 // ---------------------------------------------------------------------------
 function renderAdsets(adsetRows) {
   if (!adsetRows || adsetRows.length === 0) {
-    adsetBody.innerHTML = `<tr><td colspan="2" class="empty-row">No ad sets found.</td></tr>`;
+    adsetBody.innerHTML = `<tr><td colspan="2" class="empty-row">${t('no_adsets')}</td></tr>`;
     adsetCount.textContent = '0';
     return;
   }
@@ -663,7 +715,7 @@ function renderAdsets(adsetRows) {
 // ---------------------------------------------------------------------------
 function renderPlacements(placementRows) {
   if (!placementRows || placementRows.length === 0) {
-    placementBody.innerHTML = `<tr><td colspan="9" class="empty-row">No placement data for selected period.</td></tr>`;
+    placementBody.innerHTML = `<tr><td colspan="9" class="empty-row">${t('no_placements')}</td></tr>`;
     placementCount.textContent = '0';
     return;
   }
@@ -711,21 +763,21 @@ function formatPlatform(p) {
 }
 
 const PLACEMENT_LABELS = {
-  feed:                  'Feed',
-  right_hand_column:     'Right Column',
-  story:                 'Stories',
-  reels:                 'Reels',
-  video_feeds:           'Video Feeds',
-  search:                'Search',
-  instant_article:       'Instant Articles',
-  marketplace:           'Marketplace',
-  instream_video:        'In-Stream Video',
-  rewarded_video:        'Rewarded Video',
-  an_classic:            'AN Classic',
-  suggested_video:       'Suggested Video',
-  explore:               'Explore',
-  profile_feed:          'Profile Feed',
-  biz_disco_feed:        'Business Explore',
+  feed:              'Feed',
+  right_hand_column: 'Right Column',
+  story:             'Stories',
+  reels:             'Reels',
+  video_feeds:       'Video Feeds',
+  search:            'Search',
+  instant_article:   'Instant Articles',
+  marketplace:       'Marketplace',
+  instream_video:    'In-Stream Video',
+  rewarded_video:    'Rewarded Video',
+  an_classic:        'AN Classic',
+  suggested_video:   'Suggested Video',
+  explore:           'Explore',
+  profile_feed:      'Profile Feed',
+  biz_disco_feed:    'Business Explore',
 };
 function formatPlacement(p) {
   return PLACEMENT_LABELS[p] || (p ? p.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '—');
@@ -735,18 +787,18 @@ function formatPlacement(p) {
 // Account dropdown
 // ---------------------------------------------------------------------------
 async function loadAccounts() {
-  accountSelect.innerHTML = '<option value="">Loading…</option>';
+  accountSelect.innerHTML = `<option value="">${t('loading_accounts')}</option>`;
   try {
     const data     = await apiFetch('/api/accounts');
     const accounts = data.data || [];
     if (accounts.length === 0) {
-      accountSelect.innerHTML = '<option value="">No accounts found</option>';
+      accountSelect.innerHTML = `<option value="">${t('no_accounts')}</option>`;
       return;
     }
-    accountSelect.innerHTML = '<option value="">— Select account —</option>' +
+    accountSelect.innerHTML = `<option value="">${t('select_account')}</option>` +
       accounts.map(a => `<option value="${a.account_id}">${a.name} (${a.account_id})</option>`).join('');
   } catch (err) {
-    accountSelect.innerHTML = '<option value="">Error loading accounts</option>';
+    accountSelect.innerHTML = `<option value="">${t('error_loading_accounts')}</option>`;
     showError(err.message);
   }
 }
@@ -766,7 +818,7 @@ async function loadDashboard() {
   setFilterTag(adFilterTag, null);
   setFilterTag(adsetFilterTag, null);
 
-  aiBody.innerHTML = '<p class="ai-placeholder">Select a campaign, then click a button above.</p>';
+  aiBody.innerHTML = `<p class="ai-placeholder">${t('ai_placeholder')}</p>`;
   aiCampaignLabel.textContent = '';
   btnAiRecommend.disabled = true;
   btnAiReport.disabled    = true;
@@ -798,8 +850,8 @@ async function loadDashboard() {
     renderSummary(insightRows);
     renderCampaigns(campaignRows, insightRows);
   } else {
-    campaignBody.innerHTML = `<tr><td colspan="10" class="empty-row">Failed to load campaigns: ${campaignsResult.reason?.message}</td></tr>`;
-    showError(campaignsResult.reason?.message || 'Failed to load campaigns');
+    campaignBody.innerHTML = `<tr><td colspan="10" class="empty-row">${t('failed_campaigns')}: ${campaignsResult.reason?.message}</td></tr>`;
+    showError(campaignsResult.reason?.message || t('failed_campaigns'));
   }
 
   if (adsResult.status === 'fulfilled') {
@@ -807,7 +859,7 @@ async function loadDashboard() {
     renderAds(allAdRows);
   } else {
     allAdRows = [];
-    adBody.innerHTML = `<tr><td colspan="14" class="empty-row">Failed to load ads: ${adsResult.reason?.message}</td></tr>`;
+    adBody.innerHTML = `<tr><td colspan="14" class="empty-row">${t('failed_ads')}: ${adsResult.reason?.message}</td></tr>`;
   }
 
   if (adsetsResult.status === 'fulfilled') {
@@ -815,15 +867,16 @@ async function loadDashboard() {
     renderAdsets(allAdsetRows);
   } else {
     allAdsetRows = [];
-    adsetBody.innerHTML = `<tr><td colspan="2" class="empty-row">Failed to load ad sets: ${adsetsResult.reason?.message}</td></tr>`;
+    adsetBody.innerHTML = `<tr><td colspan="2" class="empty-row">${t('failed_adsets')}: ${adsetsResult.reason?.message}</td></tr>`;
   }
 
   if (placementsResult.status === 'fulfilled') {
     renderPlacements(placementsResult.value.data || []);
   } else {
-    placementBody.innerHTML = `<tr><td colspan="9" class="empty-row">Failed to load placement data: ${placementsResult.reason?.message}</td></tr>`;
+    placementBody.innerHTML = `<tr><td colspan="9" class="empty-row">${t('failed_placements')}: ${placementsResult.reason?.message}</td></tr>`;
   }
 
+  dataLoaded = true;
   lastRefreshEl.textContent = new Date().toLocaleTimeString();
   refreshBtn.disabled = false;
 }
@@ -841,7 +894,6 @@ function initSettingsModal(me) {
   if (me.role === 'admin') {
     document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('hidden'));
   } else {
-    // Regular users: hide admin-only connection controls but keep verify/add flow
     document.querySelectorAll('.admin-connection-only').forEach(el => el.classList.add('hidden'));
     document.querySelectorAll('.admin-connection-only-hide').forEach(el => el.classList.remove('hidden'));
   }
@@ -874,9 +926,9 @@ function initSettingsModal(me) {
     const feedback = document.getElementById('profileFeedback');
 
     feedback.className = 'modal-feedback';
-    if (!current || !next) return showFeedback(feedback, 'error', 'All fields are required.');
-    if (next !== confirm) return showFeedback(feedback, 'error', 'New passwords do not match.');
-    if (next.length < 8)  return showFeedback(feedback, 'error', 'Password must be at least 8 characters.');
+    if (!current || !next) return showFeedback(feedback, 'error', t('all_fields_required'));
+    if (next !== confirm)  return showFeedback(feedback, 'error', t('passwords_no_match'));
+    if (next.length < 8)   return showFeedback(feedback, 'error', t('password_min_8'));
 
     try {
       await apiFetch('/settings/password', {
@@ -884,7 +936,7 @@ function initSettingsModal(me) {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ currentPassword: current, newPassword: next }),
       });
-      showFeedback(feedback, 'success', 'Password updated.');
+      showFeedback(feedback, 'success', t('password_updated'));
       document.getElementById('currentPassword').value = '';
       document.getElementById('newPassword').value     = '';
       document.getElementById('confirmPassword').value = '';
@@ -905,7 +957,6 @@ function initSettingsModal(me) {
       if (ids.length > 0) {
         connected.classList.remove('hidden');
         notConnected.classList.add('hidden');
-        // Build name map from windsorDatasources (account_id → account_name)
         const nameMap = {};
         for (const ds of windsorDatasources) nameMap[ds.id] = ds.account_name;
         const list = document.getElementById('windsorConnectedList');
@@ -918,7 +969,7 @@ function initSettingsModal(me) {
         list.querySelectorAll('.btn-remove-ds').forEach(btn => {
           btn.addEventListener('click', async () => {
             const name = nameMap[btn.dataset.id] || btn.dataset.id;
-            if (!confirm(`Remove account "${name}"?`)) return;
+            if (!confirm(t('remove_account_confirm', name))) return;
             try {
               await apiFetch(`/settings/windsor-datasource/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
               refreshWindsorStatus();
@@ -937,20 +988,19 @@ function initSettingsModal(me) {
     } catch { /* ignore */ }
   }
 
-  // "Add another account" — shows the not-connected flow from connected state
+  // "Add another account"
   document.getElementById('windsorAddAnotherBtn').addEventListener('click', () => {
     document.getElementById('windsorConnected').classList.add('hidden');
     document.getElementById('windsorNotConnected').classList.remove('hidden');
-    // Step 1 (generate link) only shown for admins — it has admin-connection-only class
     document.getElementById('windsorSelectDs').classList.add('hidden');
   });
 
-  // Step 1: generate link and open Windsor in new tab
+  // Step 1: generate link
   document.getElementById('windsorConnectBtn').addEventListener('click', async () => {
     const btn      = document.getElementById('windsorConnectBtn');
     const feedback = document.getElementById('tokenFeedback');
     btn.disabled   = true;
-    btn.textContent = 'Generando link…';
+    btn.textContent = t('generating_link');
     try {
       const { url } = await apiFetch('/api/windsor/connect', { method: 'POST' });
       window.open(url, '_blank');
@@ -960,7 +1010,7 @@ function initSettingsModal(me) {
       showFeedback(feedback, 'error', err.message);
     } finally {
       btn.disabled    = false;
-      btn.textContent = 'Conectar cuenta de Meta Ads';
+      btn.textContent = t('connect_meta');
     }
   });
 
@@ -970,20 +1020,19 @@ function initSettingsModal(me) {
     document.getElementById('tokenFeedback').classList.add('hidden');
   });
 
-  // Paso 2: verificar — buscar datasources disponibles
+  // Step 2: verify
   document.getElementById('windsorVerifyBtn').addEventListener('click', async () => {
     const btn      = document.getElementById('windsorVerifyBtn');
     const feedback = document.getElementById('tokenFeedback');
     btn.disabled   = true;
-    btn.textContent = 'Verificando…';
+    btn.textContent = t('verifying');
     try {
       const { datasources } = await apiFetch('/api/windsor/available-datasources');
       if (!datasources || datasources.length === 0) {
-        showFeedback(feedback, 'error', 'No se encontraron cuentas nuevas. Asegurate de haber completado la conexión en Windsor e intentá de nuevo.');
+        showFeedback(feedback, 'error', t('no_new_accounts'));
       } else if (datasources.length === 1) {
         await assignDatasource(datasources[0].id, datasources[0].account_name, feedback);
       } else {
-        // Mostrar selector
         const select = document.getElementById('windsorDsSelect');
         select.innerHTML = datasources.map(ds =>
           `<option value="${escHtml(ds.id)}">${escHtml(ds.account_name)} (${escHtml(ds.id)})</option>`
@@ -995,11 +1044,11 @@ function initSettingsModal(me) {
       showFeedback(feedback, 'error', err.message);
     } finally {
       btn.disabled    = false;
-      btn.textContent = 'Verificar conexión';
+      btn.textContent = t('check_accounts');
     }
   });
 
-  // Paso 3: confirmar datasource del selector
+  // Step 3: confirm datasource
   document.getElementById('windsorConfirmBtn').addEventListener('click', async () => {
     const feedback     = document.getElementById('tokenFeedback');
     const datasourceId = document.getElementById('windsorDsSelect').value;
@@ -1014,7 +1063,7 @@ function initSettingsModal(me) {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ datasourceId }),
       });
-      showFeedback(feedback, 'success', `Account "${name}" connected!`);
+      showFeedback(feedback, 'success', t('account_connected', name));
       refreshWindsorStatus();
       loadAccounts();
     } catch (err) {
@@ -1022,9 +1071,9 @@ function initSettingsModal(me) {
     }
   }
 
-  // Disconnect all — removes all datasources for this user
+  // Disconnect all
   document.getElementById('windsorDisconnectBtn').addEventListener('click', async () => {
-    if (!confirm('Disconnect all Meta Ads accounts?')) return;
+    if (!confirm(t('disconnect_all_confirm'))) return;
     const feedback = document.getElementById('tokenFeedback');
     try {
       await apiFetch('/settings/windsor-datasource', {
@@ -1032,7 +1081,7 @@ function initSettingsModal(me) {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ datasourceId: null }),
       });
-      showFeedback(feedback, 'success', 'All accounts disconnected.');
+      showFeedback(feedback, 'success', t('all_disconnected'));
       refreshWindsorStatus();
       loadAccounts();
     } catch (err) {
@@ -1055,12 +1104,12 @@ function initSettingsModal(me) {
   async function loadAdminUsers() {
     const tbody    = document.getElementById('adminUserBody');
     const feedback = document.getElementById('adminFeedback');
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-row"><span class="spinner"></span> Loading…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-row"><span class="spinner"></span> ${t('loading')}</td></tr>`;
     try {
       await loadWindsorDatasources();
       const { users } = await apiFetch('/admin/users');
       if (users.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" class="empty-row">No users found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="empty-row">${t('no_users')}</td></tr>`;
         return;
       }
 
@@ -1071,7 +1120,7 @@ function initSettingsModal(me) {
         const ids = u.windsor_datasource_ids || [];
         const dsLabel = ids.length > 0
           ? ids.map(id => `<span class="ds-chip" title="ID: ${escHtml(id)}">✓ ${escHtml(dsMap[id] || id)}</span>`).join(' ')
-          : `<span class="token-status--missing">✗ None</span>`;
+          : `<span class="token-status--missing">${t('none_assigned')}</span>`;
         return `
           <tr data-uid="${u.id}">
             <td>${escHtml(u.username)}</td>
@@ -1079,9 +1128,9 @@ function initSettingsModal(me) {
             <td>${escHtml(u.role)}</td>
             <td class="windsor-cell">${dsLabel}</td>
             <td>
-              <button class="btn-small btn-assign-ds" data-id="${u.id}" data-name="${escHtml(u.username)}">+ Add</button>
-              <button class="btn-small btn-reset-pwd" data-id="${u.id}" data-name="${escHtml(u.username)}">Reset pwd</button>
-              ${u.id !== me.id ? `<button class="btn-small btn-delete-user" data-id="${u.id}" data-name="${escHtml(u.username)}">Delete</button>` : ''}
+              <button class="btn-small btn-assign-ds" data-id="${u.id}" data-name="${escHtml(u.username)}">${t('btn_add')}</button>
+              <button class="btn-small btn-reset-pwd" data-id="${u.id}" data-name="${escHtml(u.username)}">${t('btn_reset_pwd')}</button>
+              ${u.id !== me.id ? `<button class="btn-small btn-delete-user" data-id="${u.id}" data-name="${escHtml(u.username)}">${t('btn_delete')}</button>` : ''}
             </td>
           </tr>`;
       }).join('');
@@ -1092,10 +1141,10 @@ function initSettingsModal(me) {
 
       tbody.querySelectorAll('.btn-delete-user').forEach(btn => {
         btn.addEventListener('click', async () => {
-          if (!confirm(`Delete user "${btn.dataset.name}"? This cannot be undone.`)) return;
+          if (!confirm(t('delete_user_confirm', btn.dataset.name))) return;
           try {
             await apiFetch(`/admin/users/${btn.dataset.id}`, { method: 'DELETE' });
-            showFeedback(feedback, 'success', `User "${btn.dataset.name}" deleted.`);
+            showFeedback(feedback, 'success', t('user_deleted', btn.dataset.name));
             loadAdminUsers();
           } catch (err) {
             showFeedback(feedback, 'error', err.message);
@@ -1105,23 +1154,23 @@ function initSettingsModal(me) {
 
       tbody.querySelectorAll('.btn-reset-pwd').forEach(btn => {
         btn.addEventListener('click', async () => {
-          const pwd = prompt(`New password for "${btn.dataset.name}" (min 8 chars):`);
+          const pwd = prompt(t('new_password_prompt', btn.dataset.name));
           if (!pwd) return;
-          if (pwd.length < 8) { alert('Password must be at least 8 characters.'); return; }
+          if (pwd.length < 8) { alert(t('password_min_8')); return; }
           try {
             await apiFetch(`/admin/users/${btn.dataset.id}/password`, {
               method:  'PUT',
               headers: { 'Content-Type': 'application/json' },
               body:    JSON.stringify({ newPassword: pwd }),
             });
-            showFeedback(feedback, 'success', `Password reset for "${btn.dataset.name}".`);
+            showFeedback(feedback, 'success', t('password_reset', btn.dataset.name));
           } catch (err) {
             showFeedback(feedback, 'error', err.message);
           }
         });
       });
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="5" class="empty-row">Error: ${err.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-row">${t('error_prefix')}: ${err.message}</td></tr>`;
     }
   }
 
@@ -1132,14 +1181,14 @@ function initSettingsModal(me) {
 
     const options = windsorDatasources.length > 0
       ? windsorDatasources.map(ds => `<option value="${escHtml(ds.id)}">${escHtml(ds.account_name)} (${escHtml(ds.id)})</option>`).join('')
-      : '<option value="">— No datasources available —</option>';
+      : `<option value="">— ${t('no_accounts')} —</option>`;
 
     cell.innerHTML = `
       <select class="ds-select" style="font-size:0.78rem;max-width:180px">
-        <option value="">— Select —</option>
+        <option value="">— ${t('select_account').replace('— ', '').replace(' —', '')} —</option>
         ${options}
       </select>
-      <button class="btn-small btn-save-ds" style="margin-left:4px">Add</button>
+      <button class="btn-small btn-save-ds" style="margin-left:4px">${t('btn_add').replace('+ ', '')}</button>
       <button class="btn-small btn-cancel-ds" style="margin-left:2px">✕</button>`;
 
     cell.querySelector('.btn-cancel-ds').addEventListener('click', () => loadAdminUsers());
@@ -1153,7 +1202,7 @@ function initSettingsModal(me) {
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ datasourceId }),
         });
-        showFeedback(feedback, 'success', 'Account assigned.');
+        showFeedback(feedback, 'success', t('account_assigned'));
         loadAdminUsers();
       } catch (err) {
         showFeedback(feedback, 'error', err.message);
@@ -1166,16 +1215,16 @@ function initSettingsModal(me) {
     const btn      = document.getElementById('generateLinkBtn');
     const feedback = document.getElementById('generateLinkFeedback');
     btn.disabled   = true;
-    btn.textContent = '⏳ Generando…';
+    btn.textContent = t('generating_link');
     try {
       const { url } = await apiFetch('/api/windsor/generate-link', { method: 'POST' });
       await navigator.clipboard.writeText(url);
-      showFeedback(feedback, 'success', '¡Link copiado al portapapeles! Envíalo al cliente para que conecte su cuenta de Meta Ads.');
+      showFeedback(feedback, 'success', t('link_copied'));
     } catch (err) {
       showFeedback(feedback, 'error', err.message);
     } finally {
       btn.disabled   = false;
-      btn.textContent = '🔗 Generar link de conexión';
+      btn.textContent = t('generate_link_btn');
     }
   });
 
@@ -1187,7 +1236,7 @@ function initSettingsModal(me) {
     const role     = document.getElementById('newUserRole').value;
     const feedback = document.getElementById('adminFeedback');
 
-    if (!username || !email || !password) return showFeedback(feedback, 'error', 'All fields are required.');
+    if (!username || !email || !password) return showFeedback(feedback, 'error', t('all_fields_required'));
 
     try {
       await apiFetch('/admin/users', {
@@ -1195,7 +1244,7 @@ function initSettingsModal(me) {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ username, email, password, role }),
       });
-      showFeedback(feedback, 'success', `User "${username}" created.`);
+      showFeedback(feedback, 'success', t('user_created', username));
       document.getElementById('newUsername').value     = '';
       document.getElementById('newEmail').value        = '';
       document.getElementById('newUserPassword').value = '';
@@ -1219,12 +1268,10 @@ function escHtml(str) {
 // Init
 // ---------------------------------------------------------------------------
 async function init() {
-  // Auth check — redirect to login if not authenticated
   let me;
   try {
     me = await apiFetch('/auth/me');
   } catch {
-    // apiFetch already redirects on 401
     return;
   }
 
